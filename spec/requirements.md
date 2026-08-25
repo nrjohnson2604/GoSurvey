@@ -3443,6 +3443,110 @@ requirements is a planning failure, not a sign of rigor.
 - Status: accepted (2026-08-25)
 - Revisions: 2026-08-25 — accepted (D-2026-08-25-j); issue #80
 
+### REQ-119 — Command variants are clickable wherever they are prompted (GitHub issue #81)
+- Purpose: the command line tells the user which keyword options a command accepts, but only one
+  prompt in the entire program renders them as anything the mouse can reach. A user who does not
+  already know the shortcut has no way to discover it except by reading prose and guessing what to
+  type — which is the opposite of what a prompt is for
+- Priority: should
+- Type: functional
+- Statement: A **command variant** is a keyword option a command accepts at its current prompt
+  (`Azimuth`, `3P`, `Reference`, `Copy`, `Close`, `DElta`). Every variant a prompt names is
+  **both** typeable and **clickable**, and the two paths are the same path: a click submits the
+  variant's shortcut through `ProcessCommandLineSubmit` — the identical entry point Enter uses on
+  typed text — so keyboard and mouse cannot drift apart by construction.
+
+  The mechanism is a **text convention, not a data structure**. A variant is declared by writing
+  it into the prompt string in the form the codebase already uses, and the renderer derives the
+  clickable region and the submitted token from that text. Two forms are recognized:
+
+  - **Inline** — `[A]zimuth`, `[2P]`, `[3P]`: the bracketed run is the shortcut and the link label;
+    any trailing lowercase continues as plain text.
+  - **Grouped** — `[DElta/Percent/Total/DYnamic]`, `[Y]es/[N]o`: each `/`-separated option becomes
+    its **own** link, and each option's shortcut is its **leading run of uppercase letters and
+    digits** (`DElta`→`DE`, `Percent`→`P`, `DYnamic`→`DY`, `Yes`→`Y`). Separators and brackets
+    render as plain text.
+
+  This convention is chosen deliberately over a declared `{display, shortcut, action}` table: the
+  capitalization rule is already how this codebase writes these prompts, so the convention reads
+  the intent that is there rather than adding an abstraction with no second present-day use
+  (CLAUDE.md rule 2). The cost is accepted and named: the shortcut is *implied* by the prompt text
+  rather than declared beside the handler, so a prompt may name a token the command does not
+  accept. Acceptance therefore requires that every marked-up token be **verified against the
+  command's own text handler**, and that verification is part of the work, not a later audit.
+
+  **One renderer serves every surface.** The floating command bar and the classic docked panel
+  render variants through the **same** function; no command implements click handling of its own.
+  The renderer is **wrap-aware** — it breaks between segments when the next one will not fit the
+  content region — because the docked panel's prompts are long and wrap today.
+
+  **A live prompt is clickable; history is not.** There are **three** places a prompt string can
+  come from, and only two of them are prompts:
+
+  | Surface | Role | Rendered |
+  |---|---|---|
+  | `CommandInputHint` (UI) | the live prompt | **clickable** |
+  | `*FooterHint` (Commands) | the live prompt | **clickable** |
+  | `log.push_back` | history | **plain text — never clickable** |
+
+  The command log is a record of what already happened. A prompt that has scrolled into it is no
+  longer live, and making it clickable would let a user submit a token to a command that has since
+  moved on. So a command whose options are announced **only** in the log has no clickable variants
+  by construction — the fix is to give that command a **live prompt entry**, not to make the log
+  interactive.
+
+  This is not hypothetical: `FILLET` (`[Radius/Trim]`, `[Trim/No trim]`), `CHAMFER`
+  (`[Distance/Angle/Trim]`, `[Trim/No trim]`) and `ELEV` (`W`orld) announce their options in the
+  log and appear in **neither** hint family. Of the 45 `AppCommandState::Kind` values, 11 have no
+  hint entry; after excluding the modeless ones (`None`, `Pan`, `Orbit`), **eight** commands are
+  unreached — `Fillet`, `Chamfer`, `Elev`, `FeatureLine`, `Hatch`, `PdfAttach`, `VpFreeze`,
+  `VpThaw`. Authoring their live prompts is part of the coverage audit. A command that genuinely
+  has no variants needs no markup, but it must be **audited and recorded as having none**, not
+  silently skipped.
+
+  Clickable variants are visually distinct from surrounding prompt text, carry a hover state, and
+  do not interfere with coordinate or text entry at the same prompt.
+- Sequencing: **two increments.**
+  - **Increment 1 — the mechanism.** Grouped-form and shortcut-extraction parsing; wrap-aware
+    layout; the docked panel routed through the shared renderer; the hand-rolled LINE-only link
+    block deleted; the parsing rule extracted as a **pure function** and unit-tested. LINE's
+    `[A]`/`[2P]` and the two currently-defective grouped prompts are correct at the end of this
+    increment.
+  - **Increment 2 — the coverage audit.** Command-by-command normalization of the remaining prompt
+    strings across both hint families, each token verified against its handler, with headless
+    transcript coverage per command. **Plus** authoring live-prompt entries for the eight commands
+    that have none, so their variants become reachable at all. Deliberately left unscoped until
+    reached — but note it is larger than "mark up the strings that exist": it also writes prompts
+    that do not exist yet.
+- Acceptance:
+  - **Increment 1:**
+    - clicking `[A]` is indistinguishable from typing `a`, and `[2P]` from typing `2p`, in **both**
+      the floating bar and the docked panel — same resulting command state, same log lines;
+    - `Erase source objects? [Y]es/[N]o <N>:` renders **two** links; clicking `[Y]` erases the
+      source objects and clicking `[N]` does not. Today it renders **one** link that submits
+      `yes/no`, which the command rejects;
+    - `LENGTHEN — select object, or [DElta/Percent/Total/DYnamic]:` renders **four** links
+      submitting `de`, `p`, `t`, `dy` — each the token `TryLengthenModeToggle` accepts. Today it
+      renders one link submitting `delta/percent/total/dynamic`, which the command rejects;
+    - a prompt whose text wraps in the docked panel still renders every link on the correct line,
+      with no horizontal overflow;
+    - no command contains click-handling code of its own;
+    - the prompt→variants rule is a pure function covered by `CommandLineTests`, including: inline,
+      grouped, mixed-case shortcut extraction, a bracket with no closing `]`, and an empty group.
+  - **Increment 2:** every variant a **live prompt** names is clickable; every clickable token is
+    accepted by that command's text handler in that state; no variant loses its keyboard path;
+    each of the eight hint-less commands either has a live prompt entry or is recorded as having
+    no variants; and **no log line is clickable**.
+- Owner-layer: UI (the renderer and the prompt text); Commands (the `*FooterHint` prompt strings
+  and the token handlers the audit verifies against)
+- Status: accepted (2026-08-25)
+- Revisions: 2026-08-25 — accepted (D-2026-08-25-k); issue #81.
+  2026-08-25 — amended (D-2026-08-25-l) after the Verification review of TASK-110's plan found a
+  third prompt surface the original text did not account for: the log. Adds the live-vs-history
+  rule, names the eight commands no hint family reaches, and widens increment 2 from "normalize
+  existing strings" to "normalize existing strings **and author the missing prompts**".
+
+
 ---
 
 ## Performance requirements
@@ -3891,6 +3995,7 @@ requirements is a planning failure, not a sign of rigor.
 | REQ-116 | UI/Platform | proposed — not yet scoped; catalogued from Known Limitations 2026-08-23 (D-2026-08-23-i) | proposed |
 | REQ-117 | UI/Commands | proposed — not yet scoped; catalogued from Known Limitations 2026-08-23 (D-2026-08-23-i) | proposed |
 | REQ-118 | Commands/Viewport | planned — `headless.regression-118-polyline-close-enter` (click the start vertex closes; Enter ends open with no closing segment; two vertices refuse to close; CLOSE/END still work; Esc leaves nothing; model, 3DPOLY and paper space each asserted) | accepted |
+| REQ-119 | UI/Commands | planned — `CommandLineTests` (the prompt→variants rule as a pure function: inline `[A]zimuth`/`[2P]`, grouped `[DElta/Percent/Total/DYnamic]` and `[Y]es/[N]o`, mixed-case shortcut extraction incl. `No trim`→`N`, unclosed bracket, empty group) + `headless.regression-119-variant-token-accepted` (every extracted token is ACCEPTED by the command showing that prompt — MIRROR y erases / n keeps, LENGTHEN de/p/t/dy each from a fresh `WaitSelectOrMode`; note click≡type is true by construction and is deliberately NOT what this asserts) + manual (links render and hover in BOTH the floating bar and the classic dock; a wrapping dock prompt keeps its links on the correct line with no horizontal overflow; **no log line is clickable**) | accepted |
 | REQ-302 | UI/IO | done — all 3 increments delivered (GitHub issue #83). Increment 1 (tab infrastructure) done, TASK-104, amended once from GUI-pass feedback (D-2026-08-25-d). Increment 2 (responsive layout engine) done, TASK-105/ADR-038, user confirmed with no findings (D-2026-08-25-g). Increment 3 (content audit) done, TASK-106, D-2026-08-25-h/i — corrected this requirement's own speculative Statement text (no blocks/xrefs/point clouds/standards exist), relocated Import DXF/DWG to Insert, Settings to View, Export DXF/DWG + Plot/Batch Plot to Output (moved off Home); Manage tab intentionally left empty, nothing exists to relocate there. User confirmed the increment 3 manual GUI pass with no findings. 541/541 Catch2 test cases and 591/591 headless transcripts green throughout | accepted |
 
 ---
