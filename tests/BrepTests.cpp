@@ -5395,3 +5395,141 @@ TEST_CASE("A closed wall's plan needs two loops, where Extrude takes one", "[bre
   REQUIRE(brep::ComputeMassProperties(disc).volume == Approx(kPi * rOut * rOut * h).margin(1e-9));
   REQUIRE(brep::ComputeMassProperties(disc).volume > 3.0 * wallVolume);
 }
+
+// ---------------------------------------------------------------------------------------------
+// General trim loops (ADR-052, GitHub issue #306): `Face::paramLoops` is an additive field that
+// nothing yet renders, measures or picks. These tests exercise only what #306 itself owns — that
+// `Validate` accepts a well-formed general loop and refuses a malformed one by name — on hand-built
+// fixtures, since no primitive or Boolean builder populates the field yet (that stays true through
+// #307-#310).
+// ---------------------------------------------------------------------------------------------
+
+namespace {
+
+/// A face whose `loops` describes a single square ring (any planar box face will do — the general
+/// loop checks in `Validate` do not require `paramLoops` to geometrically match the 3D boundary,
+/// only to be internally well-formed, per ADR-052 (c): the polygon is a classification aid, not the
+/// authoritative curve).
+int FindSingleLoopPlaneFace(const Solid& s) {
+  for (std::size_t i = 0; i < s.faces.size(); ++i) {
+    if (s.faces[i].surface.kind == brep::SurfaceKind::Plane && s.faces[i].loops.size() == 1)
+      return static_cast<int>(i);
+  }
+  return -1;
+}
+
+int FindTwoLoopPlaneFace(const Solid& s) {
+  for (std::size_t i = 0; i < s.faces.size(); ++i) {
+    if (s.faces[i].surface.kind == brep::SurfaceKind::Plane && s.faces[i].loops.size() == 2)
+      return static_cast<int>(i);
+  }
+  return -1;
+}
+
+}  // namespace
+
+TEST_CASE("Validate accepts a face with a well-formed general trim loop", "[brep][req306][adr052]") {
+  Problem why = Problem::Ok;
+  Solid box;
+  REQUIRE(brep::MakeBox(World(), 10, 10, 10, &box, &why));
+  const int fi = FindSingleLoopPlaneFace(box);
+  REQUIRE(fi >= 0);
+  brep::Face& f = box.faces[static_cast<std::size_t>(fi)];
+  // A simple CCW pentagon in (u,v).
+  f.paramLoops = {{{0.0, 0.0}, {4.0, 0.0}, {4.0, 2.0}, {2.0, 4.0}, {0.0, 2.0}}};
+  REQUIRE(brep::Validate(box) == Problem::Ok);
+}
+
+TEST_CASE("Validate refuses a general trim loop with too few points, by name", "[brep][req306][adr052]") {
+  Problem why = Problem::Ok;
+  Solid box;
+  REQUIRE(brep::MakeBox(World(), 10, 10, 10, &box, &why));
+  const int fi = FindSingleLoopPlaneFace(box);
+  REQUIRE(fi >= 0);
+  box.faces[static_cast<std::size_t>(fi)].paramLoops = {{{0.0, 0.0}, {1.0, 1.0}}};
+  REQUIRE(brep::Validate(box) == Problem::GeneralLoopOpen);
+}
+
+TEST_CASE("Validate refuses a self-intersecting general trim loop, by name", "[brep][req306][adr052]") {
+  Problem why = Problem::Ok;
+  Solid box;
+  REQUIRE(brep::MakeBox(World(), 10, 10, 10, &box, &why));
+  const int fi = FindSingleLoopPlaneFace(box);
+  REQUIRE(fi >= 0);
+  // A bow-tie: edges (0,0)-(4,4) and (4,0)-(0,4) cross in the middle.
+  box.faces[static_cast<std::size_t>(fi)].paramLoops = {{{0.0, 0.0}, {4.0, 4.0}, {4.0, 0.0}, {0.0, 4.0}}};
+  REQUIRE(brep::Validate(box) == Problem::GeneralLoopSelfIntersects);
+}
+
+TEST_CASE("Validate refuses a general trim loop wound the wrong way, by name", "[brep][req306][adr052]") {
+  Problem why = Problem::Ok;
+  Solid box;
+  REQUIRE(brep::MakeBox(World(), 10, 10, 10, &box, &why));
+  const int fi = FindSingleLoopPlaneFace(box);
+  REQUIRE(fi >= 0);
+  // Same square as the accepted case, wound CW instead of CCW.
+  box.faces[static_cast<std::size_t>(fi)].paramLoops = {{{0.0, 0.0}, {0.0, 4.0}, {4.0, 4.0}, {4.0, 0.0}}};
+  REQUIRE(brep::Validate(box) == Problem::GeneralLoopWrongWinding);
+}
+
+TEST_CASE("Validate refuses a general trim loop whose paramLoops count disagrees with loops, by name",
+          "[brep][req306][adr052]") {
+  Problem why = Problem::Ok;
+  Solid box;
+  REQUIRE(brep::MakeBox(World(), 10, 10, 10, &box, &why));
+  const int fi = FindSingleLoopPlaneFace(box);
+  REQUIRE(fi >= 0);
+  // The face has one 3D loop; give it two param loops.
+  box.faces[static_cast<std::size_t>(fi)].paramLoops = {{{0.0, 0.0}, {4.0, 0.0}, {4.0, 4.0}, {0.0, 4.0}},
+                                                         {{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}, {1.0, 2.0}}};
+  REQUIRE(brep::Validate(box) == Problem::GeneralLoopCountMismatch);
+}
+
+TEST_CASE("Validate accepts a general trim loop's hole nested inside its outer boundary",
+          "[brep][req306][adr052]") {
+  Problem why = Problem::Ok;
+  Solid block;
+  Solid cyl;
+  REQUIRE(brep::MakeBox(World(), 10, 10, 10, &block, &why));
+  REQUIRE(brep::MakeCylinder(At(0, 0, -1), 1.0, 12.0, &cyl, &why));  // through-hole, z -1..11
+  std::vector<Solid> r;
+  REQUIRE(brep::BooleanSubtract(block, cyl, &r, &why));
+  REQUIRE(r.size() == 1);
+  const int fi = FindTwoLoopPlaneFace(r[0]);
+  REQUIRE(fi >= 0);
+  brep::Face& f = r[0].faces[static_cast<std::size_t>(fi)];
+  REQUIRE(f.loops.size() == 2);
+  // Outer CCW square, hole (a smaller square) CW, fully inside.
+  f.paramLoops = {{{-5.0, -5.0}, {5.0, -5.0}, {5.0, 5.0}, {-5.0, 5.0}},
+                  {{-1.0, -1.0}, {-1.0, 1.0}, {1.0, 1.0}, {1.0, -1.0}}};
+  REQUIRE(brep::Validate(r[0]) == Problem::Ok);
+}
+
+TEST_CASE("Validate refuses a general trim loop hole that lies outside its outer boundary, by name",
+          "[brep][req306][adr052]") {
+  Problem why = Problem::Ok;
+  Solid block;
+  Solid cyl;
+  REQUIRE(brep::MakeBox(World(), 10, 10, 10, &block, &why));
+  REQUIRE(brep::MakeCylinder(At(0, 0, -1), 1.0, 12.0, &cyl, &why));
+  std::vector<Solid> r;
+  REQUIRE(brep::BooleanSubtract(block, cyl, &r, &why));
+  REQUIRE(r.size() == 1);
+  const int fi = FindTwoLoopPlaneFace(r[0]);
+  REQUIRE(fi >= 0);
+  brep::Face& f = r[0].faces[static_cast<std::size_t>(fi)];
+  // Hole entirely outside the outer square.
+  f.paramLoops = {{{-5.0, -5.0}, {5.0, -5.0}, {5.0, 5.0}, {-5.0, 5.0}},
+                  {{20.0, 20.0}, {20.0, 22.0}, {22.0, 22.0}, {22.0, 20.0}}};
+  REQUIRE(brep::Validate(r[0]) == Problem::GeneralLoopHoleNotNested);
+}
+
+TEST_CASE("A rectangle-form face validates byte-identically with an empty general trim loop",
+          "[brep][req306][adr052]") {
+  Problem why = Problem::Ok;
+  Solid box;
+  REQUIRE(brep::MakeBox(World(), 20, 10, 8, &box, &why));
+  for (const brep::Face& f : box.faces)
+    REQUIRE(f.paramLoops.empty());
+  REQUIRE(brep::Validate(box) == Problem::Ok);
+}

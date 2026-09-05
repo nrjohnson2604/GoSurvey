@@ -1454,6 +1454,13 @@ const char* ProblemText(Problem p) {
   case Problem::NonFiniteCoordinate: return "A coordinate is not a finite number.";
   case Problem::NotClosed: return "The surface does not enclose a volume.";
   case Problem::UnusedVertex: return "A vertex is not used by any edge.";
+  case Problem::GeneralLoopCountMismatch:
+    return "A face's general trim loops do not match its 3D loops.";
+  case Problem::GeneralLoopOpen: return "A general trim loop has fewer than 3 points.";
+  case Problem::GeneralLoopSelfIntersects: return "A general trim loop crosses itself.";
+  case Problem::GeneralLoopWrongWinding: return "A general trim loop winds the wrong way.";
+  case Problem::GeneralLoopHoleNotNested:
+    return "A general trim loop's hole is not inside its outer boundary.";
   case Problem::PathTooShort:
     return "A polysolid needs at least two points, and a closed one at least two segments.";
   case Problem::PathSegmentDegenerate:
@@ -10410,6 +10417,73 @@ bool MakePolysolid(const ucs::Ucs& frame, const Path& path, double width, double
 
 
 // ---------------------------------------------------------------------------------------------
+// General trim loops (ADR-052, issue #306): validation of `Face::paramLoops`, a straight-line
+// (u,v) polygon used only for inside/outside classification. Local to this translation unit —
+// #307/#308/#309 build their own consumers of the same field, not of these helpers.
+// ---------------------------------------------------------------------------------------------
+
+namespace {
+
+/// Shoelace signed area: positive for a CCW polygon.
+[[nodiscard]] double PolygonSignedArea2D(const std::vector<curveisect::Vec2>& poly) {
+  double acc = 0.0;
+  const std::size_t n = poly.size();
+  for (std::size_t i = 0; i < n; ++i) {
+    const curveisect::Vec2& a = poly[i];
+    const curveisect::Vec2& b = poly[(i + 1) % n];
+    acc += a.x * b.y - b.x * a.y;
+  }
+  return 0.5 * acc;
+}
+
+/// True when segments p0-p1 and p2-p3 cross at an interior point of both (shared endpoints
+/// between CONSECUTIVE polygon edges are not tested — see caller).
+[[nodiscard]] bool SegmentsCross(const curveisect::Vec2& p0, const curveisect::Vec2& p1,
+                                  const curveisect::Vec2& p2, const curveisect::Vec2& p3) {
+  const auto cross = [](const curveisect::Vec2& o, const curveisect::Vec2& a, const curveisect::Vec2& b) {
+    return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  };
+  const double d1 = cross(p2, p3, p0);
+  const double d2 = cross(p2, p3, p1);
+  const double d3 = cross(p0, p1, p2);
+  const double d4 = cross(p0, p1, p3);
+  return ((d1 > 0.0) != (d2 > 0.0)) && ((d3 > 0.0) != (d4 > 0.0));
+}
+
+/// A closed polygon (implicitly closed by wrapping the last vertex back to the first) crosses
+/// itself when any two NON-ADJACENT edges intersect.
+[[nodiscard]] bool PolygonSelfIntersects2D(const std::vector<curveisect::Vec2>& poly) {
+  const std::size_t n = poly.size();
+  for (std::size_t i = 0; i < n; ++i) {
+    const curveisect::Vec2& a0 = poly[i];
+    const curveisect::Vec2& a1 = poly[(i + 1) % n];
+    for (std::size_t j = i + 1; j < n; ++j) {
+      if (j == i || j == (i + 1) % n || (j + 1) % n == i)
+        continue;  // shares a vertex with edge i - not a self-intersection
+      if (SegmentsCross(a0, a1, poly[j], poly[(j + 1) % n]))
+        return true;
+    }
+  }
+  return false;
+}
+
+/// Even-odd ray cast: is \p p inside \p poly (closed by wrap-around)?
+[[nodiscard]] bool PointInPolygon2D(const curveisect::Vec2& p, const std::vector<curveisect::Vec2>& poly) {
+  bool inside = false;
+  const std::size_t n = poly.size();
+  for (std::size_t i = 0, j = n - 1; i < n; j = i++) {
+    const curveisect::Vec2& a = poly[i];
+    const curveisect::Vec2& b = poly[j];
+    if (((a.y > p.y) != (b.y > p.y)) &&
+        (p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x))
+      inside = !inside;
+  }
+  return inside;
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------------------------
 // Validity.
 // ---------------------------------------------------------------------------------------------
 
@@ -10540,6 +10614,31 @@ Problem Validate(const Solid& s) {
       if ((f.surface.kind == SurfaceKind::Sphere || f.surface.kind == SurfaceKind::Torus) &&
           !(std::fabs(f.vEnd - f.vStart) > 1e-12))
         return Problem::DegenerateFace;
+    }
+
+    // General trim loop (ADR-052, issue #306). Empty `paramLoops` is the rectangle form checked
+    // above and is untouched by any of this - byte-identical to pre-ADR-052 validation.
+    if (!f.paramLoops.empty()) {
+      if (f.paramLoops.size() != f.loops.size())
+        return Problem::GeneralLoopCountMismatch;
+      for (std::size_t li = 0; li < f.paramLoops.size(); ++li) {
+        const std::vector<curveisect::Vec2>& poly = f.paramLoops[li];
+        if (poly.size() < 3)
+          return Problem::GeneralLoopOpen;
+        if (PolygonSelfIntersects2D(poly))
+          return Problem::GeneralLoopSelfIntersects;
+        const double area = PolygonSignedArea2D(poly);
+        const bool isHole = li != 0;
+        if ((isHole && area >= 0.0) || (!isHole && area <= 0.0))
+          return Problem::GeneralLoopWrongWinding;
+      }
+      const std::vector<curveisect::Vec2>& outer = f.paramLoops[0];
+      for (std::size_t li = 1; li < f.paramLoops.size(); ++li) {
+        for (const curveisect::Vec2& p : f.paramLoops[li]) {
+          if (!PointInPolygon2D(p, outer))
+            return Problem::GeneralLoopHoleNotNested;
+        }
+      }
     }
   }
 
