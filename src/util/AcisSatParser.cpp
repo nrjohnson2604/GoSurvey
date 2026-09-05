@@ -1,5 +1,6 @@
 #include "AcisSatParser.hpp"
 
+#include "nurbs.hpp"
 #include "ray3d.hpp"
 #include "ucs.hpp"
 
@@ -28,6 +29,23 @@
 ///   cone-surface    attrib origin.xyz axis.xyz refdir.xyz sin-angle cos-angle major-radius radius-ratio
 ///   sphere-surface  attrib centre.xyz axis.xyz refdir.xyz radius
 ///   torus-surface   attrib centre.xyz axis.xyz refdir.xyz major-radius minor-radius
+///   spline-surface  attrib degU degV nu nv rational knotsU[nu+degU+1] knotsV[nv+degV+1]
+///                          ctrlpt[nu*nv](x y z [w if rational])
+///   blend-surface   attrib underlying-surface
+///   sweep-surface   attrib underlying-surface
+///
+/// `spline-surface`, `blend-surface` and `sweep-surface` are this project's own invented schema for
+/// GitHub issue #300 (ADR-051 fast-follow), not real ACIS record syntax — like every other record
+/// above, ADR-051's rationale for choosing a hand-authored layout over the real one applies. A
+/// `spline-surface` carries a `nurbs::Patch` directly (degree/knot/control-point/weight data,
+/// row-major control points exactly as `nurbs::Patch::ctrl` documents) rather than ACIS's actual
+/// fit-point/approximation encoding — this importer maps it straight onto `SurfaceKind::Nurbs`
+/// (REQ-315/ADR-048), so it is naturally limited to ADR-048 (b)'s degree-3-or-less, untrimmed
+/// rectangular patch. A `blend-surface`/`sweep-surface` record names the one surface it "reduces to"
+/// when representable (a `$-1` pointer means it does not reduce to anything this importer can
+/// represent, e.g. a genuinely variable-radius fillet) — real ACIS never says this so plainly, but the
+/// alternative is re-deriving a blend/sweep surface's true math from its defining curves, which is out
+/// of scope (see AcisSatParser.hpp).
 ///
 /// A record's leading "$" pointer fields resolve to another record's 0-based position in the file
 /// (the modern, non-indexed ACIS SAT convention); "$-1" is the null pointer.
@@ -197,6 +215,19 @@ class Importer {
   bool Vec(const SatRecord& r, size_t field0, const char* what, Vec3* out) {
     return Num(r, field0, what, &out->x) && Num(r, field0 + 1, what, &out->y) &&
            Num(r, field0 + 2, what, &out->z);
+  }
+
+  /// A non-negative integer field (a spline-surface's degree/count fields), stored as an ordinary SAT
+  /// number token but required to be an exact whole number.
+  bool Int(const SatRecord& r, size_t field, const char* what, int* out) {
+    double v = 0.0;
+    if (!Num(r, field, what, &v))
+      return false;
+    const double rounded = std::round(v);
+    if (std::fabs(v - rounded) > 1e-9 || rounded < 0.0)
+      return Fail(std::string("malformed ") + what + " in a '" + r.type + "' record");
+    *out = static_cast<int>(rounded);
+    return true;
   }
 
   bool Word(const SatRecord& r, size_t field, const char* what, std::string* out) {
@@ -514,6 +545,191 @@ class Importer {
     return true;
   }
 
+  /// Reverses a patch's U parametrisation in place (reflects `knotsU`, reverses each row of `ctrl` /
+  /// `wts`) — what a 'reversed' face sense means for a NURBS patch: it flips the sign of `du`, and so
+  /// of the outward normal `du x dv`, the same job \ref BuildPlaneFace does by negating the normal and
+  /// \ref BuildConeFace does by setting `surface.inward`.
+  static void ReversePatchU(nurbs::Patch* p) {
+    const double lo = p->knotsU.front();
+    const double hi = p->knotsU.back();
+    std::vector<double> nk(p->knotsU.size());
+    for (size_t i = 0; i < nk.size(); ++i)
+      nk[i] = lo + hi - p->knotsU[p->knotsU.size() - 1 - i];
+    p->knotsU = std::move(nk);
+    std::vector<Vec3> nc(p->ctrl.size());
+    std::vector<double> nw(p->wts.size());
+    for (int j = 0; j < p->nv; ++j)
+      for (int i = 0; i < p->nu; ++i) {
+        const size_t src = static_cast<size_t>(j) * static_cast<size_t>(p->nu) +
+                           static_cast<size_t>(p->nu - 1 - i);
+        const size_t dst = static_cast<size_t>(j) * static_cast<size_t>(p->nu) + static_cast<size_t>(i);
+        nc[dst] = p->ctrl[src];
+        nw[dst] = p->wts[src];
+      }
+    p->ctrl = std::move(nc);
+    p->wts = std::move(nw);
+  }
+
+  /// Parses a `spline-surface` record's degree/knot/control-point/weight fields (see the field-layout
+  /// comment at the top of this file) straight onto a `nurbs::Patch` and maps it to
+  /// `SurfaceKind::Nurbs` (REQ-315/ADR-048). ADR-048 (b)'s patch is always the **whole, untrimmed**
+  /// parameter rectangle, so — unlike `BuildConeFace` — the face's `uStart..vEnd` span is simply the
+  /// patch's own domain; it is `VerifySplineLoopIsFullBoundary` below, not this function, that confirms
+  /// the loop actually bounds that whole rectangle rather than a proper trim this importer cannot
+  /// represent.
+  bool BuildSplineFace(const SatRecord& surface, const std::string& faceSense, brep::Face* outFace) {
+    int degU = 0, degV = 0, nu = 0, nv = 0, rational = 0;
+    if (!Int(surface, 1, "spline-surface.degU", &degU) || !Int(surface, 2, "spline-surface.degV", &degV) ||
+        !Int(surface, 3, "spline-surface.nu", &nu) || !Int(surface, 4, "spline-surface.nv", &nv) ||
+        !Int(surface, 5, "spline-surface.rational", &rational))
+      return false;
+    if (degU < 1 || degU > nurbs::kMaxDegree || degV < 1 || degV > nurbs::kMaxDegree)
+      return Fail("spline-surface has a degree outside the [1, " + std::to_string(nurbs::kMaxDegree) +
+                  "] range this importer's NURBS patch representation supports (ADR-048 (b))");
+
+    nurbs::Patch patch;
+    patch.degU = degU;
+    patch.degV = degV;
+    patch.nu = nu;
+    patch.nv = nv;
+    size_t field = 6;
+    const int knotUCount = nu + degU + 1;
+    const int knotVCount = nv + degV + 1;
+    if (knotUCount < 0 || knotVCount < 0)
+      return Fail("spline-surface has a non-positive control-point count");
+    patch.knotsU.resize(static_cast<size_t>(knotUCount));
+    for (int i = 0; i < knotUCount; ++i, ++field)
+      if (!Num(surface, field, "spline-surface.knotsU", &patch.knotsU[static_cast<size_t>(i)]))
+        return false;
+    patch.knotsV.resize(static_cast<size_t>(knotVCount));
+    for (int i = 0; i < knotVCount; ++i, ++field)
+      if (!Num(surface, field, "spline-surface.knotsV", &patch.knotsV[static_cast<size_t>(i)]))
+        return false;
+
+    const long long ctrlCount = static_cast<long long>(nu) * static_cast<long long>(nv);
+    if (ctrlCount <= 0)
+      return Fail("spline-surface has no control points");
+    patch.ctrl.resize(static_cast<size_t>(ctrlCount));
+    patch.wts.assign(static_cast<size_t>(ctrlCount), 1.0);
+    for (long long i = 0; i < ctrlCount; ++i) {
+      Vec3 p{};
+      if (!Vec(surface, field, "spline-surface.ctrlpt", &p))
+        return false;
+      field += 3;
+      if (rational != 0) {
+        double w = 1.0;
+        if (!Num(surface, field, "spline-surface.ctrlpt-weight", &w))
+          return false;
+        ++field;
+        if (!(w > 0.0))
+          return Fail("spline-surface control point has a non-positive weight");
+        patch.wts[static_cast<size_t>(i)] = w;
+      }
+      patch.ctrl[static_cast<size_t>(i)] = p;
+    }
+
+    const nurbs::PatchProblem prob = nurbs::ValidatePatch(patch);
+    if (prob != nurbs::PatchProblem::Ok)
+      return Fail(std::string("spline-surface patch is invalid: ") + nurbs::PatchProblemText(prob));
+    if (faceSense == "reversed")
+      ReversePatchU(&patch);
+
+    outFace->surface.kind = brep::SurfaceKind::Nurbs;
+    outFace->uStart = nurbs::UMin(patch);
+    outFace->uEnd = nurbs::UMax(patch);
+    outFace->vStart = nurbs::VMin(patch);
+    outFace->vEnd = nurbs::VMax(patch);
+    outFace->surface.patch = std::move(patch);
+    return true;
+  }
+
+  /// A `spline-surface` face's loop must bound the **entire** patch rectangle, corner to corner — this
+  /// importer has no way to represent a proper trim (ADR-048 (b) patches are always the full untrimmed
+  /// rectangle). Requires exactly 4 edges whose 4 vertices are, as an unordered set within tolerance,
+  /// the patch's 4 corner control points (`ctrl[0]`, `ctrl[nu-1]`, `ctrl[(nv-1)*nu]`,
+  /// `ctrl[nu*nv-1]`) — the same corners `nurbs::RuledLinear`/`ArcRibbon` place at a Loft/Sweep side
+  /// face's own 4-edge loop, so a genuinely untrimmed patch built by this importer's own kernel would
+  /// pass this same check.
+  bool VerifySplineLoopIsFullBoundary(const brep::Solid& out, const nurbs::Patch& patch,
+                                       const LoopWalk& lw) {
+    if (lw.uses.size() != 4)
+      return false;
+    const Vec3 corners[4] = {patch.ctrl[0], patch.ctrl[static_cast<size_t>(patch.nu - 1)],
+                              patch.ctrl[static_cast<size_t>((patch.nv - 1) * patch.nu)],
+                              patch.ctrl[static_cast<size_t>(patch.nu * patch.nv - 1)]};
+    bool used[4] = {false, false, false, false};
+    for (const brep::EdgeUse& u : lw.uses) {
+      const brep::Edge& e = out.edges[static_cast<size_t>(u.edge)];
+      const Vec3& p = out.vertices[static_cast<size_t>(u.reversed ? e.v1 : e.v0)].p;
+      bool matched = false;
+      for (int c = 0; c < 4; ++c) {
+        if (used[c])
+          continue;
+        if (ray3d::Length(ray3d::Sub(p, corners[c])) <= kTol) {
+          used[c] = true;
+          matched = true;
+          break;
+        }
+      }
+      if (!matched)
+        return false;
+    }
+    return used[0] && used[1] && used[2] && used[3];
+  }
+
+  /// Builds one `brep::Face` for the surface at \p surfaceId, dispatching on its record type.
+  /// `blend-surface` and `sweep-surface` records recurse through the surface they name as their
+  /// representable reduction (a `$-1` "underlying-surface" pointer means they have none) — see the
+  /// field-layout comment at the top of this file.
+  bool BuildFaceForSurface(int surfaceId, const std::string& faceSense, std::vector<LoopWalk>* loops,
+                            brep::Solid* out, brep::Face* outFace, int depth) {
+    if (depth > 8)
+      return Fail("surface reduction chain is implausibly deep (possible ACIS record corruption)");
+    const SatRecord* surface = nullptr;
+    if (!Req(surfaceId, "surface", &surface))
+      return false;
+    if (surface->type == "plane-surface") {
+      if (loops->size() > 2)
+        return Fail("planar face has more than one hole loop — not supported by this importer");
+      if (!BuildPlaneFace(*surface, faceSense, outFace))
+        return false;
+      OrderPlaneLoopsOuterFirst(*out, outFace->surface.frame, loops);
+      return true;
+    }
+    if (surface->type == "cone-surface") {
+      if (loops->size() != 1)
+        return Fail("cylindrical/conical face has a hole loop — not a supported loop shape (issue #302)");
+      return BuildConeFace(*surface, faceSense, &loops->front(), out, outFace);
+    }
+    if (surface->type == "spline-surface") {
+      if (loops->size() != 1)
+        return Fail("spline-surface face has more than one loop — a trimmed NURBS boundary with holes "
+                    "is not supported by this importer (issue #300)");
+      if (!BuildSplineFace(*surface, faceSense, outFace))
+        return false;
+      if (!VerifySplineLoopIsFullBoundary(*out, outFace->surface.patch, loops->front()))
+        return Fail(
+            "spline-surface face's loop does not bound the whole parametric patch — a proper trim is "
+            "not representable by this importer's untrimmed NURBS patch (ADR-048 (b), issue #300)");
+      return true;
+    }
+    if (surface->type == "blend-surface" || surface->type == "sweep-surface") {
+      int underlyingId = 0;
+      const std::string what = surface->type + ".underlying-surface";
+      if (!Ptr(*surface, 1, what.c_str(), &underlyingId))
+        return false;
+      if (underlyingId < 0)
+        return Fail("'" + surface->type +
+                    "' does not reduce to a surface this importer can represent — not supported "
+                    "(issue #300)");
+      return BuildFaceForSurface(underlyingId, faceSense, loops, out, outFace, depth + 1);
+    }
+    if (surface->type == "sphere-surface" || surface->type == "torus-surface")
+      return Fail("surface kind '" + surface->type +
+                  "' is recognized but not yet mapped by this importer (fast-follow of issue #299)");
+    return Fail("surface kind '" + surface->type + "' is not supported by this importer (see issue #300)");
+  }
+
   bool Build(brep::Solid* out) {
     const int bodyId = FindFirst("body");
     if (bodyId < 0)
@@ -564,9 +780,6 @@ class Importer {
         return false;
       if (faceSense != "forward" && faceSense != "reversed")
         return Fail("face sense '" + faceSense + "' is not 'forward'/'reversed'");
-      const SatRecord* surface = nullptr;
-      if (!Req(surfaceId, "surface", &surface))
-        return false;
 
       std::vector<LoopWalk> loops;
       {
@@ -590,23 +803,8 @@ class Importer {
       }
 
       brep::Face outFace;
-      if (surface->type == "plane-surface") {
-        if (loops.size() > 2)
-          return Fail("planar face has more than one hole loop — not supported by this importer");
-        if (!BuildPlaneFace(*surface, faceSense, &outFace))
-          return false;
-        OrderPlaneLoopsOuterFirst(*out, outFace.surface.frame, &loops);
-      } else if (surface->type == "cone-surface") {
-        if (loops.size() != 1)
-          return Fail("cylindrical/conical face has a hole loop — not a supported loop shape (issue #302)");
-        if (!BuildConeFace(*surface, faceSense, &loops.front(), out, &outFace))
-          return false;
-      } else if (surface->type == "sphere-surface" || surface->type == "torus-surface") {
-        return Fail("surface kind '" + surface->type +
-                     "' is recognized but not yet mapped by this importer (fast-follow of issue #299)");
-      } else {
-        return Fail("surface kind '" + surface->type + "' is not supported by this importer (see issue #300)");
-      }
+      if (!BuildFaceForSurface(surfaceId, faceSense, &loops, out, &outFace, 0))
+        return false;
       for (LoopWalk& lw : loops)
         outFace.loops.push_back(brep::Loop{std::move(lw.uses)});
       out->faces.push_back(std::move(outFace));

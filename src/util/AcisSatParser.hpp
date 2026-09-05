@@ -18,13 +18,20 @@
 /// - **SAT (text) only.** SAB (binary ACIS) is a different token framing of the same record model and
 ///   is deferred to GitHub issue #301. The caller (`LibreDwgCad.cpp`) is expected to check the DWG
 ///   `3DSOLID`'s `version` field and refuse SAB before ever calling this parser.
-/// - **Analytic primitive surfaces only, and only plane/cylinder/cone this increment** (ACIS's
-///   `cone-surface` also encodes a cylinder as its zero-half-angle case). `sphere-surface` and
-///   `torus-surface` are recognized but refused — their loops can pinch at a pole or wrap a periodic
-///   tube seam, a genuinely different shape than cylinder/cone's two recognizable loop patterns below,
-///   and are a tracked fast-follow of this same feature rather than a hastily-generalized recognizer
-///   (ADR-051 (b-1)). Free-form (`spline-surface`) and derived (blend/sweep/loft) surfaces are
-///   deferred to issue #300 and refused here by name.
+/// - **Analytic primitive surfaces: plane/cylinder/cone**, plus **free-form and derived surfaces**
+///   (`spline-surface`, `blend-surface`, `sweep-surface` — GitHub issue #300) that map onto
+///   `SurfaceKind::Nurbs` (REQ-315/ADR-048) when representable. `sphere-surface` and `torus-surface`
+///   are recognized but refused — their loops can pinch at a pole or wrap a periodic tube seam, a
+///   genuinely different shape than cylinder/cone's two recognizable loop patterns below, and are a
+///   tracked fast-follow of this same feature rather than a hastily-generalized recognizer
+///   (ADR-051 (b-1)).
+/// - **A `spline-surface` face's loop must bound the whole, untrimmed patch rectangle** (four edges at
+///   the patch's four corners) — ADR-048 (b) never allows a proper trim, so a spline surface with a
+///   genuinely trimmed boundary is refused by name rather than approximated. Degree is limited to
+///   `nurbs::kMaxDegree` (3) per direction, the same limit every other NURBS patch in this kernel has.
+///   A `blend-surface` or `sweep-surface` is accepted only when it names, as its representable
+///   reduction, a surface this importer can otherwise build (plane/cone/spline) — a genuinely
+///   variable-radius blend or a swept/lofted surface with no such reduction is refused by name.
 /// - **A cylindrical or conical face's loop must be a full revolve** (two full-circle rim edges,
 ///   `v0 == v1` on each, no seam) — its u-span is simply `[0, 2*pi)`. A **partial** revolve (a seam
 ///   line, an arc, a seam line, an arc) is recognizable but deliberately NOT accepted this increment:
