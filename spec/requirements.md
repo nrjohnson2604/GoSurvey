@@ -1910,11 +1910,11 @@ requirements is a planning failure, not a sign of rigor.
   `SubmitGizmoClick` / `UpdateGizmoDrag` / `CommitGizmoDrag`; overlay `CadGizmoOverlay` +
   `BuildGizmoOverlay`; headless `GIZMO GRAB|DROP|CANCEL` and `EXPECT GIZMO` / `EXPECT GIZMOAXIS`.
   **Rotate and scale are NOT implemented and are blocked, not deferred by preference:** ROTATE and
-  SCALE are still plan-only and still refuse solids (REQ-320 item 6), so a rotate handle would again
+  SCALE are still plan-only and still refuse solids (REQ-322 item 6), so a rotate handle would again
   have no typed command to agree with. Lifting them means turning every entity's stored frame about
   an arbitrary axis — the work REQ-312 needed for one tilted arc, multiplied across every type — and
   is its own requirement.
-  **The gizmo also takes a SUB-OBJECT selection** (2026-09-05, D-2026-09-05-a, issue #148 acceptance
+  **The gizmo also takes a SUB-OBJECT selection** (2026-09-05, D-2026-09-05-b, issue #148 acceptance
   4): with exactly one solid FACE selected it shows ONE handle along that face's own normal — purple,
   not the X handle's red, because it is not X — and commits through `CadApplyPushPull`, the function
   typed `PRESSPULL` calls. One handle and not three because `brep::PushPullFace` takes a distance
@@ -1928,14 +1928,14 @@ requirements is a planning failure, not a sign of rigor.
   Z; `ApplyRotationToSelection` turns about a vertical axis only; `ApplyScaleToSelection` scales
   about a flat point. And all six transform commands drop solids by name. So a gizmo's up-down
   handle would have had no typed command to agree with, and the objects Phase 5 exists to edit could
-  not be moved at all. **REQ-320 lifts translation to 3D and makes a solid movable**; the gizmo
+  not be moved at all. **REQ-322 lifts translation to 3D and makes a solid movable**; the gizmo
   follows it rather than preceding it, because "agrees with the equivalent typed command" requires
   the typed command to be able to say it first.
 - Revisions: 2026-08-11 — initial. 2026-09-04 — the starting-state note added and the delivery
-  sequenced behind REQ-320 (D-2026-09-04-f). No change to what is required, only to what has to
+  sequenced behind REQ-322 (D-2026-09-04-f). No change to what is required, only to what has to
   exist underneath it. 2026-09-04 — the TRANSLATE gizmo implemented (D-2026-09-04-g); rotate and
   scale recorded as blocked on plan-only ROTATE/SCALE rather than left silent. 2026-09-05 — the
-  gizmo extended to a sub-object FACE selection (D-2026-09-05-a, issue #148 acceptance 4).
+  gizmo extended to a sub-object FACE selection (D-2026-09-05-b, issue #148 acceptance 4).
 
 ### REQ-061 — Per-viewport camera in paper space
 - Purpose: put a plan view and an isometric on the same sheet
@@ -6810,7 +6810,84 @@ capability that does not exist. They are recorded here rather than quietly dropp
   wording implies.
 - Revisions: 2026-09-04 — initial (D-2026-09-04-c, GitHub issue #148 criteria 3, 7 and 8).
 
-### REQ-320 — MOVE works in three dimensions, and a solid can be moved
+### REQ-322 — Import an ACIS 3D-solid block (analytic primitives, SAT only)
+
+- Purpose: real-world vendor block libraries (Plant 3D piping/mechanical symbols) commonly store their
+  only geometry as an ACIS `3DSOLID` entity; GoSurvey's DWG/DXF importer silently skips it today,
+  producing an empty block definition with no error (GitHub issue #299, found while implementing #284).
+- Priority: should
+- Type: functional
+- Depends on: REQ-313 / ADR-045 (the analytic `brep::Surface` kinds this maps onto), ADR-051 (the scope
+  decision this requirement records), REQ-300 (no vendored ACIS/geometry kernel).
+- Statement: importing a `.dwg`/`.dxf` entity of type `3DSOLID` whose ACIS payload is **SAT-encoded**
+  (ADR-051 (a)) and whose body is a **solid lump** built only from **analytic primitive surfaces** —
+  plane, cylinder (ACIS's zero-half-angle cone), or cone this increment, and only their **full-revolve**
+  form (two full-circle rim edges, no seam) — sphere, torus, and a **partial** cylinder/cone revolve
+  (whose u-span cannot simply be the full `[0, 2*pi)` a full revolve's can) are each a tracked
+  fast-follow within this same requirement, not yet accepted (ADR-051 (b-1)) — and a planar face's
+  boundary within the kernel's existing simple-polygon tessellation limit (ADR-051 (c)) — produces a
+  real `brep::Solid` with
+  `PrimitiveKind::None`, placed in `st.cadSolids` (and,
+  when the entity lives inside a block definition, carried by `CadBlockContent::solids` so it survives
+  `INSERT`/`WBLOCK`/`BLOCKIMPORT`, closing the same round-trip gap #284 fixed for 2D geometry).
+
+  ACIS payloads or content outside that scope are **refused, never approximated or silently dropped**
+  (ADR-051 (d), REQ-201): SAB encoding, free-form/blend/swept surfaces, sphere/torus surfaces (this
+  increment), a curved face whose loop does not match a recognized shape, a wire or sheet (non-solid)
+  body. The refusal names the entity's handle and the specific record or face
+  that could not be represented, and reaches the log the same way an unrecognized entity type already
+  does (`NoteSkip`) — the import completes with a message, not a silent empty result.
+- Acceptance:
+  - a `.dwg` block whose sole content is a single-primitive ACIS SAT solid (e.g. a plain cylinder or a
+    box with a cylindrical bore) round-trips through `BLOCKIMPORT`: the resulting block definition's
+    `CadSolid` has the expected face count, surface kinds and volume (within REQ-101) for the source
+    shape;
+  - the same solid inserted via `INSERT` and then `WBLOCK`'d back out survives with its solid intact;
+  - a `.dwg` `3DSOLID` using SAB encoding is refused with a message naming the entity and "binary (SAB)
+    ACIS is not yet supported" (or equivalent), and the rest of the file still imports;
+  - a `.dwg` `3DSOLID` containing a spline/blend surface, or a face whose boundary does not reduce to a
+    parametric rectangle, is refused with a message naming the entity and the specific face/record, and
+    the rest of the file still imports;
+  - a malformed or truncated ACIS stream is refused with a message, never a crash;
+  - no third-party ACIS/geometry-kernel dependency is introduced (REQ-300).
+- Owner-layer: IO (`src/util/AcisSatParser.*`, `src/io/LibreDwgCad.cpp`), Domain (`brep::Solid` is the
+  target representation, unchanged), Commands (`CadBlockContent`/`CadBlocks.cpp` round-trip plumbing)
+- Status: accepted — **increment 1 of 3**. SAB (#301) and free-form/blend/swept surfaces (#300) are
+  separate, deferred increments; general trimmed-face boundaries are a kernel extension tracked
+  separately (#302) and not a prerequisite here.
+- Revisions: 2026-09-05 — initial (ADR-051, GitHub issue #299).
+
+### REQ-321 — General trimmed-boundary faces (representation decision only)
+
+- Purpose: `brep::Face` can currently only bound a face with the surface's own iso-parameter rectangle
+  (`uStart/uEnd/vStart/vEnd`, REQ-313/ADR-045); a real-world imported solid (ACIS, per #299/#302) or any
+  future feature needing an arbitrarily-trimmed face (general fillets, freeform sketch profiles) cannot
+  be represented. This requirement records the representation decision only — no kernel behavior changes
+  as part of it.
+- Priority: should
+- Type: architectural
+- Depends on: REQ-313 / ADR-045 (the `Face`/`Loop`/`Edge` model being extended), REQ-315 / ADR-048 (the
+  `SurfaceKind::Nurbs` parameter rectangle this must not conflict with), ADR-052 (the decision this
+  requirement records).
+- Statement: `brep::Face` gains an additive `paramLoops` field — a straight-line polygon in (u,v) space
+  per existing `loops` entry (outer boundary plus holes) — that is **empty by default**, leaving every
+  current primitive and Boolean-result builder's rectangle-form faces byte-identical in every consumer
+  (`Validate`, mass properties, tessellation, picking). A non-empty `paramLoops` marks a face as
+  **general form**, whose boundary for classification purposes (point-in-loop tests) is that polygon,
+  while the authoritative 3D boundary curve remains the existing `loops`/`Edge` records unchanged. Only
+  straight-line polylines are in scope; a curved boundary edge contributes finely-sampled points, and the
+  procedural `Intersection` edge kind is out of scope (no producer needs it). Full detail in ADR-052.
+- Acceptance:
+  - `spec/architecture.md` records ADR-052 with status "accepted" and a decision date;
+  - this requirement and ADR-052 explicitly name the follow-up order for #302's four consumer areas:
+    #306 (data model + `Validate`) → #307 (mass properties) → #308 (tessellation) → #309 (picking), with
+    #310 (ACIS import) as the concrete consumer that wires an importer into the new representation;
+  - no file under `src/` is modified by this requirement — it is a recorded decision only, implemented
+    by the follow-up issues above.
+- Owner-layer: Domain (`brep` — decision only; the follow-up issues are the actual owners of the code)
+- Status: accepted — design decision recorded; #306–#310 implement it.
+- Revisions: 2026-09-05 — initial (ADR-052, GitHub issue #305, split from #302, split from #299).
+### REQ-322 — MOVE works in three dimensions, and a solid can be moved
 
 - Purpose: REQ-060 asks for a gizmo that manipulates the selection **in 3D** and whose drag must
   "produce coordinates agreeing with the equivalent typed command". Neither half is possible today:
@@ -6869,6 +6946,10 @@ capability that does not exist. They are recorded here rather than quietly dropp
   Phase 5 slice 4a).
 - Revisions: 2026-09-04 — initial. Written when REQ-060's gizmo work found that the transforms it
   must agree with are two-dimensional and exclude solids, which no requirement had recorded.
+  2026-09-05 — renumbered from REQ-320 to REQ-322. `beta` accepted its own REQ-320 (the ACIS
+  3D-solid import, issue #299) while this branch was in flight; the merged branch is where the two
+  meet, and the one already on `beta` keeps the number.
+
 
 ### REQ-100 — Frame budget
 - Purpose: interactive responsiveness (desktop/OpenGL)
@@ -7352,7 +7433,7 @@ capability that does not exist. They are recorded here rather than quietly dropp
 | REQ-057 | Domain/IO/UI | planned — DXF group-30 round-trip within REQ-101; `.gs` Z bit-identical on reload; legacy `.gs` loads all-zero Z; Properties Z edit undoable; survey elevation reads back as Z; parallel Z arrays stay length-locked across insert/erase/undo | accepted |
 | REQ-058 | Renderer/UI/Commands | `CameraTests` (plan-view parity, anchor-before-rotation composition, billboard basis) + `Ray3dTests` + `LinetypeTessellationTests` (per-vertex Z) + `CurveIntersectTests` + `BenchSceneTests`; manual/scripted in-app before/after for the render, overlay and glyph stages that no test target can link (TASK-036/037/039) | accepted — signed off 2026-08-12 | **Fixed 2026-09-01 (TASK-170):** box selection off plan view projected its two drag corners at Z = 0 while lines project at their true Z, so on a work plane raised by `ELEV` or tilted by a UCS the fence both drew and selected at pixels the cursor was never over. Each corner now carries its own work-plane elevation (`selBoxAnchorZ`, published through `uiCursorWorldZ` rather than threaded through five call sites). Invisible until now because Z does not move a PLAN projection and is genuinely 0 on the world XY plane at elevation zero — and because `headless.req058-orbited-fence-elevation` is the FIRST transcript to orbit the view at all, via a new `VIEWANGLES` driver verb. That is the wider finding: every REQ-058 behaviour that only exists off plan view had no failing test available to it. Negative-tested — restoring the Z = 0 projection reports `SELECTED: expected 1, got 0`
 | REQ-059 | UI | planned — manual (+Z / −Y / an off-axis handle animate correctly and settle < 0.5 s; gizmo tracks the camera after orbit; clicks outside the gizmo still pick geometry). Appearance is ImOGuizmo stock — the mockup is not the target (amended 2026-08-11) | accepted |
-| REQ-060 | UI/Commands | translate (entities): `headless.req060-gizmo-translate` + `GizmoTranslateTests`. translate (a solid FACE): `headless.req148-gizmo-subobject` (the drag and `PRESSPULL 12` leaving identical mass properties; one handle not three; no gizmo on an edge or a vertex) + `SubObjectSelectionTests` (the mode derivation, vertex-for-vertex equality with PRESSPULL, the captured face reference). rotate/scale: not implemented — blocked on plan-only ROTATE/SCALE (REQ-320 item 6) | accepted |
+| REQ-060 | UI/Commands | translate (entities): `headless.req060-gizmo-translate` + `GizmoTranslateTests`. translate (a solid FACE): `headless.req148-gizmo-subobject` (the drag and `PRESSPULL 12` leaving identical mass properties; one handle not three; no gizmo on an edge or a vertex) + `SubObjectSelectionTests` (the mode derivation, vertex-for-vertex equality with PRESSPULL, the captured face reference). rotate/scale: not implemented — blocked on plan-only ROTATE/SCALE (REQ-322 item 6) | accepted |
 | REQ-061 | Domain/Renderer/IO | `ViewportCameraTests` (plan-view projection == `ModelToPaperIn` bit-for-bit over a grid; SW-iso hand-computed sheet point; rect-centre invariant; sibling independence) + `GsIoViewportCameraTests` (camera round-trips `.gs`; legacy file with the keys stripped loads all-plan) + manual (two viewports one plan one isometric, on screen and in the PDF plot) | accepted — implemented 2026-08-31 (issue #175) |
 | REQ-063 | Domain/IO/Renderer | planned — `.gs` round-trip bit-identical; legacy `.gs` loads; extents include meshes; erase undoable in one step; layer freeze/off/non-plottable honoured; 2M-triangle model loads without index overflow | accepted |
 | REQ-064 | Renderer/UI/IO | planned — 2D Wireframe **pixel-identical** to pre-change (the parity gate, as REQ-058 had); occlusion correct in Hidden/Shaded; lighting follows the camera; style change does not alter geometry/selection/snap/plot; REQ-100 met in Shaded | accepted |

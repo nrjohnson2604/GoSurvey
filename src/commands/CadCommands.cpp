@@ -6508,7 +6508,7 @@ const CmdEntry kRegistry[] = {
     {"blocklist", "", "List block definitions"},
     {"blockstats", "", "Definition statistics"},
     {"purge", "-purge", "Purge unused block definitions"},
-    {"wblock", "", "Write a block definition to a file (unavailable — see issue #264 follow-up)"},
+    {"wblock", "", "Write a block definition to its own .dwg file"},
     {"blockimport", "", "Import block definitions (.dxf/.dwg); omit the path to browse"},
     {"blocklib", "blockbrowser", "List the drawing block library with previews"},
     {"blocksearch", "", "Search block names"},
@@ -9299,7 +9299,7 @@ void ApplyRotationToSelection(AppCommandState& st, float bx, float by, float rad
   BumpCadGpuCache(st);
 }
 
-/// Move every selected solid by (dx, dy, dz), replacing each rather than editing it (REQ-320).
+/// Move every selected solid by (dx, dy, dz), replacing each rather than editing it (REQ-322).
 ///
 /// `brep::Translate` and not a per-field sweep here, and its own header says why: it moves every
 /// vertex, every arc edge's centre, every face's surface origin, a NURBS patch's control points and
@@ -9341,7 +9341,7 @@ static void TranslateSelectedSolids(AppCommandState& st, float dx, float dy, flo
 void ApplyTranslationToSelection(AppCommandState& st, float dx, float dy, float dz,
                                 std::vector<std::string>& log) {
   DropSurfacesFromSelectionForTransform(st, "MOVE", log);
-  // Solids are NOT dropped any more (REQ-320): `brep::Translate` moves one completely, and doing so
+  // Solids are NOT dropped any more (REQ-322): `brep::Translate` moves one completely, and doing so
   // is the whole reason this function gained a Z. Every OTHER transform still drops them by name -
   // rotating a solid means turning every surface frame and every arc-edge frame in its topology,
   // which is a separate requirement rather than a footnote to this one.
@@ -9418,7 +9418,7 @@ void ApplyTranslationToSelection(AppCommandState& st, float dx, float dy, float 
     CadAnnotation& a = st.cadAnnotations[k];
     a.insX += dx;
     a.insY += dy;
-    a.insZ += dz;  // REQ-320: text and dimensions carry an elevation like everything else
+    a.insZ += dz;  // REQ-322: text and dimensions carry an elevation like everything else
     if (a.kind == CadAnnotation::Kind::Mtext) {
       a.boxMinX += dx;
       a.boxMinY += dy;
@@ -9970,7 +9970,7 @@ bool ParseAngleDegreesInternal(const std::string& raw, float* degreesOut) {
 /// elevation dropped on the floor. Strict about the field count for the same reason.
 ///
 /// An omitted Z is zero and `*outHasZ` is false, so every existing drawing, transcript and habit
-/// behaves exactly as it did (REQ-320 item 4).
+/// behaves exactly as it did (REQ-322 item 4).
 static bool PeelTypedElevation(const std::string& raw, std::string* outXy, float* outZ, bool* outHasZ,
                                const char* verbUpper, std::vector<std::string>& log) {
   const std::string trimmed = StringUtil::trimCopy(raw);
@@ -10002,7 +10002,7 @@ bool HandleModifyText(AppCommandState& st, bool isCopy, const std::string& lineI
   std::string line = StringUtil::trimCopy(lineIn);
   using MP = AppCommandState::ModifyPhase;
   if (st.modifyPhase == MP::NeedBase) {
-    // REQ-320 item 4: a base point may carry an elevation. Peeled before the shared 2D parser sees
+    // REQ-322 item 4: a base point may carry an elevation. Peeled before the shared 2D parser sees
     // it, because that parser reads two numbers and ignores the rest.
     std::string baseXy;
     float baseZ = 0.f;
@@ -10034,7 +10034,7 @@ bool HandleModifyText(AppCommandState& st, bool isCopy, const std::string& lineI
     float dy = py - st.modifyBaseY;
     // A RELATIVE destination (@dx,dy,dz) states the offset directly; an absolute one states a
     // position, so the offset is the difference. An omitted Z is zero on either side, which is what
-    // keeps a plain `MOVE 0,0 / 10,0` moving nothing in Z (REQ-320 item 4).
+    // keeps a plain `MOVE 0,0 / 10,0` moving nothing in Z (REQ-322 item 4).
     const bool relative = !destXy.empty() && destXy[0] == '@';
     const float dz = relative ? destZ : (destZ - st.modifyBaseZ);
     PushUndoSnapshot(st, isCopy ? "Copy" : "Move");
@@ -12130,7 +12130,7 @@ void SubmitViewportPickImpl(AppCommandState& st, float wx, float wy, std::vector
         FinalizeCopyTranslation(st, dx, dy, log);
       else {
         ApplyTranslationToSelection(st, dx, dy, 0.f, log);
-        // The PICKED path stays plan-only for now (REQ-320 item 4 covers typed entry). A picked
+        // The PICKED path stays plan-only for now (REQ-322 item 4 covers typed entry). A picked
         // MOVE has always ignored the elevations of its two points, and quietly making it 3D would
         // change what every existing drag does rather than adding something new.
         // Stay in MOVE — same selection at new position, ready for another base+destination.
@@ -12481,7 +12481,7 @@ CadGizmoMode CadGizmoModeFor(const AppCommandState& st) {
   // An EDGE or a VERTEX selection deliberately gets no gizmo. The kernel has no operation that moves
   // one - `brep::PushPullFace` is the only solid edit there is - so a handle would advertise a move
   // that cannot happen. Issue #148 criterion 3's other two thirds are unbuilt, and the gizmo says so
-  // by not appearing rather than by refusing after the drag (D-2026-09-05-a).
+  // by not appearing rather than by refusing after the drag (D-2026-09-05-b).
   if (!st.subObjectSelection.empty())
     return CadGizmoMode::None;
   return st.selection.empty() ? CadGizmoMode::None : CadGizmoMode::Entity;

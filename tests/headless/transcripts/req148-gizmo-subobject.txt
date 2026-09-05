@@ -80,7 +80,7 @@ EXPECT SOLIDPROPS 0 4000 1600 8 12 6
 # --- An EDGE or a VERTEX selection gets NO gizmo ---------------------------------------------------
 # Not an omission. `brep::PushPullFace` is the only solid edit the kernel has, so there is no
 # operation that moves an edge or a vertex; a handle would advertise a move that cannot happen, and
-# refusing after the drag is worse than not offering it (D-2026-09-05-a). Issue #148 criterion 3's
+# refusing after the drag is worse than not offering it (D-2026-09-05-b). Issue #148 criterion 3's
 # other two thirds are unbuilt, and the gizmo says so by not appearing.
 
 NEW

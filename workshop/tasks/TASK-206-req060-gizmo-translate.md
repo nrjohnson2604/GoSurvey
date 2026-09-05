@@ -68,7 +68,7 @@ see "Scope" below. D-2026-09-04-g records the four design choices.
 ## Scope held deliberately narrow
 
 **Rotate and scale are not implemented, and they are blocked rather than deferred by preference.**
-ROTATE and SCALE are still plan-only and still refuse solids (REQ-320 item 6), so a rotate handle
+ROTATE and SCALE are still plan-only and still refuse solids (REQ-322 item 6), so a rotate handle
 would have no typed command to agree with — the same gap D-2026-09-04-f found and only half closed.
 Lifting them means turning every entity's stored frame about an arbitrary axis: the work REQ-312
 needed for one tilted arc, multiplied across every entity type. That is its own requirement.
@@ -135,5 +135,5 @@ a fence at each position, because mass properties alone would also pass on a sol
   land, one must go — the branches were cut independently and neither could see the other.
 - **DEBT-3 — no numeric entry during a drag.** The gizmo cannot be given a typed distance mid-drag
   the way AutoCAD's can. The typed MOVE covers the case; this is convenience, not capability.
-- **DEBT-4 — inherited from REQ-320.** COPY is still 2D, and ROTATE/SCALE/MIRROR/ARRAY/STRETCH still
-  refuse solids. DEBT-2 of TASK-205 is now on the critical path: it is what blocks slice 4c.
+- **DEBT-4 — inherited from REQ-322.** COPY is still 2D, and ROTATE/SCALE/MIRROR/ARRAY/STRETCH still
+  refuse solids. DEBT-2 of TASK-209 is now on the critical path: it is what blocks slice 4c.

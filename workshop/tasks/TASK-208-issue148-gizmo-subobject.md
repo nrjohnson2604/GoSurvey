@@ -8,14 +8,14 @@ GitHub issue #148 (Phase 5 of #120), acceptance 4:
 > REQ-101.
 
 Built on REQ-060 (the gizmo, slice 4b / TASK-206), REQ-318 (the sub-object selection) and REQ-319
-(push/pull, TASK-207 — the "equivalent typed command" here is `PRESSPULL`). D-2026-09-05-a records
+(push/pull, TASK-207 — the "equivalent typed command" here is `PRESSPULL`). D-2026-09-05-b records
 the four choices.
 
 ## What was built
 
 | file | change |
 |---|---|
-| `spec/project.md` | D-2026-09-05-a |
+| `spec/project.md` | D-2026-09-05-b |
 | `spec/requirements.md` | REQ-060 status extended to name the face mode |
 | `src/commands/CadCommands.{hpp,cpp}` | `CadGizmoMode` + `CadGizmoModeFor` / `CadGizmoSubObjectFace` / `CadGizmoAxisCountFor`; face branches in the anchor, the axis and the commit; `CadSubObjectGripAxisDistance` deleted |
 | `src/util/gizmooverlay.hpp` | `faceMode`, so the single handle can take its own colour |
@@ -111,4 +111,4 @@ decisions that cite it updated. It surfaces here because this is the first branc
 - **DEBT-3 — edge and vertex grips.** Issue #148 criterion 3's other two thirds. They need kernel
   operations that do not exist, so they are a requirement of their own, not a gizmo change.
 - **DEBT-4 — rotate and scale**, inherited from TASK-206 and still blocked on plan-only
-  ROTATE/SCALE (REQ-320 item 6).
+  ROTATE/SCALE (REQ-322 item 6).

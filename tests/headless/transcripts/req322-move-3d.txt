@@ -1,4 +1,4 @@
-# REQ-320 (D-2026-09-04-f, GitHub issue #148 Phase 5 slice 4a) — MOVE in three dimensions, and a
+# REQ-322 (D-2026-09-04-f, GitHub issue #148 Phase 5 slice 4a) — MOVE in three dimensions, and a
 # solid that can finally be moved.
 #
 # Written because REQ-060's gizmo could not be built on what was there. `ApplyTranslationToSelection`
@@ -128,7 +128,7 @@ BOX 80 30 120 70
 EXPECT SELECTED 1
 
 # --- Every OTHER transform still refuses a solid, by name -----------------------------------------
-# REQ-320 item 6. Rotating a solid means turning every surface frame and every arc-edge frame in its
+# REQ-322 item 6. Rotating a solid means turning every surface frame and every arc-edge frame in its
 # topology — the work REQ-312 needed for one tilted arc — and is a separate requirement. Asserted so
 # that "MOVE works now" cannot be read as "transforms work now".
 

@@ -676,7 +676,7 @@ TEST_CASE("The gizmo mode is derived from the selection, never stored", "[subobj
 
   SECTION("an EDGE or a VERTEX: no gizmo, and that is the honest answer") {
     // The kernel has no operation that moves either, so a handle would advertise a move that cannot
-    // happen. Refusing after the drag would be worse than not offering it (D-2026-09-05-a).
+    // happen. Refusing after the drag would be worse than not offering it (D-2026-09-05-b).
     REQUIRE(SubmitSubObjectPick(st, RayAt({0, 100, 100}, {0, 5, 8}), Tol(0.5, 0.5), false, log));
     REQUIRE(st.subObjectSelection.size() == 1);
     REQUIRE(st.subObjectSelection[0].kind != solidpick::Kind::Face);

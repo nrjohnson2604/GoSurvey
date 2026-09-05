@@ -1,4 +1,4 @@
-# TASK-205 — MOVE in three dimensions, and a solid that can be moved (REQ-320, issue #148 slice 4a)
+# TASK-209 — MOVE in three dimensions, and a solid that can be moved (REQ-322, issue #148 slice 4a)
 
 ## Origin: a SPEC GAP found while starting the gizmo
 
@@ -37,10 +37,10 @@ next reader does not rediscover it.
 
 | file | change |
 |---|---|
-| `spec/requirements.md` | REQ-320, six statement items + seven acceptance bullets; REQ-060 starting-state note and revision |
+| `spec/requirements.md` | REQ-322, six statement items + seven acceptance bullets; REQ-060 starting-state note and revision |
 | `spec/project.md` | D-2026-09-04-f |
 | `src/commands/CadCommands.{hpp,cpp}` | `ApplyTranslationToSelection` gains `dz`; `TranslateSelectedSolids`; `PeelTypedElevation`; `modifyBaseZ` |
-| `tests/headless/transcripts/req320-move-3d.txt` | new, 92 steps |
+| `tests/headless/transcripts/req322-move-3d.txt` | new, 92 steps |
 
 ### Three choices worth recording
 
@@ -56,7 +56,7 @@ next reader does not rediscover it.
    separate and gated on `dz != 0`.
 3. **The PICKED MOVE path stays plan-only.** It has always ignored its two points' elevations;
    quietly making it 3D would change what every existing drag does rather than adding something new.
-   Typed entry is where the Z arrives (REQ-320 item 4), and the gizmo will be the other 3D route.
+   Typed entry is where the Z arrives (REQ-322 item 4), and the gizmo will be the other 3D route.
 
 ### Scope held deliberately narrow
 
@@ -66,7 +66,7 @@ single tilted arc, multiplied across every type — and is a separate requiremen
 
 ## Test approach
 
-`req320-move-3d.txt`, 92 steps. **The no-Z case is asserted first**, because a regression there is
+`req322-move-3d.txt`, 92 steps. **The no-Z case is asserted first**, because a regression there is
 worse than the feature is worth: every existing drawing and habit must behave exactly as before.
 
 Then a typed absolute Z, a relative `@dx,dy,dz`, and an absolute *pair* where the offset is the

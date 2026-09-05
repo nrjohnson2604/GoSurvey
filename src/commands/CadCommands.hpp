@@ -3005,7 +3005,7 @@ struct AppCommandState {
 
   float modifyBaseX = 0.f;
   float modifyBaseY = 0.f;
-  /// REQ-320: the base point's elevation, so a typed MOVE can carry a Z. Zero when the base was
+  /// REQ-322: the base point's elevation, so a typed MOVE can carry a Z. Zero when the base was
   /// typed without one, which is every drawing that predates 3D MOVE.
   float modifyBaseZ = 0.f;
   /// \c Kind::Scale — after base pick: reference length (world) so scale = new length / this value (or distance /
@@ -5343,7 +5343,7 @@ void SelectSimilarToCurrentSelection(AppCommandState& st, std::vector<std::strin
 // takes a direction from the user - the grid, ORTHO, coordinate entry - follows the UCS (REQ-154),
 // and in the World UCS the two are identical, so the default view is unchanged.
 
-/// Translate the whole selection by (\p dx, \p dy, \p dz) in WCS (REQ-320). Surfaces are dropped by
+/// Translate the whole selection by (\p dx, \p dy, \p dz) in WCS (REQ-322). Surfaces are dropped by
 /// name (REQ-201); solids move through `brep::Translate`. The caller owns the undo snapshot.
 ///
 /// Declared here — it had been a definition private to `CadCommands.cpp` — because REQ-060's
