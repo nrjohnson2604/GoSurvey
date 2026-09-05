@@ -53,6 +53,88 @@ body $-1 $22 $-1 $-1 #
 End-of-ACIS-data
 )";
 
+/// A unit cube (see `brep::MakeBox`'s vertex/edge/loop layout, reused verbatim here so the topology is
+/// known-good) whose top face is declared as a `spline-surface` (a flat, degree-1x1 bilinear patch
+/// spanning exactly the same 4 corners a `plane-surface` top face would) instead of a `plane-surface`
+/// — GitHub issue #300.
+const std::string kCubeSplineTopSat = kHeader + R"(
+point $-1 -0.5 -0.5 0 #
+point $-1 0.5 -0.5 0 #
+point $-1 0.5 0.5 0 #
+point $-1 -0.5 0.5 0 #
+point $-1 -0.5 -0.5 1 #
+point $-1 0.5 -0.5 1 #
+point $-1 0.5 0.5 1 #
+point $-1 -0.5 0.5 1 #
+vertex $-1 $-1 $0 #
+vertex $-1 $-1 $1 #
+vertex $-1 $-1 $2 #
+vertex $-1 $-1 $3 #
+vertex $-1 $-1 $4 #
+vertex $-1 $-1 $5 #
+vertex $-1 $-1 $6 #
+vertex $-1 $-1 $7 #
+straight-curve $-1 0 0 0 1 0 0 #
+edge $-1 $8 $9 $16 forward #
+edge $-1 $9 $10 $16 forward #
+edge $-1 $10 $11 $16 forward #
+edge $-1 $11 $8 $16 forward #
+edge $-1 $12 $13 $16 forward #
+edge $-1 $13 $14 $16 forward #
+edge $-1 $14 $15 $16 forward #
+edge $-1 $15 $12 $16 forward #
+edge $-1 $8 $12 $16 forward #
+edge $-1 $9 $13 $16 forward #
+edge $-1 $10 $14 $16 forward #
+edge $-1 $11 $15 $16 forward #
+plane-surface $-1 0 0 0 0 0 -1 1 0 0 #
+plane-surface $-1 0 -0.5 0 0 -1 0 1 0 0 #
+plane-surface $-1 0.5 0 0 1 0 0 0 1 0 #
+plane-surface $-1 0 0.5 0 0 1 0 1 0 0 #
+plane-surface $-1 -0.5 0 0 -1 0 0 0 1 0 #
+spline-surface $-1 1 1 2 2 0 0 0 1 1 0 0 1 1 -0.5 -0.5 1 0.5 -0.5 1 -0.5 0.5 1 0.5 0.5 1 #
+loop $-1 $-1 $36 $65 #
+coedge $-1 $37 $-1 $-1 $20 reversed $35 #
+coedge $-1 $38 $-1 $-1 $19 reversed $35 #
+coedge $-1 $39 $-1 $-1 $18 reversed $35 #
+coedge $-1 $36 $-1 $-1 $17 reversed $35 #
+loop $-1 $-1 $41 $66 #
+coedge $-1 $42 $-1 $-1 $21 forward $40 #
+coedge $-1 $43 $-1 $-1 $22 forward $40 #
+coedge $-1 $44 $-1 $-1 $23 forward $40 #
+coedge $-1 $41 $-1 $-1 $24 forward $40 #
+loop $-1 $-1 $46 $67 #
+coedge $-1 $47 $-1 $-1 $17 forward $45 #
+coedge $-1 $48 $-1 $-1 $26 forward $45 #
+coedge $-1 $49 $-1 $-1 $21 reversed $45 #
+coedge $-1 $46 $-1 $-1 $25 reversed $45 #
+loop $-1 $-1 $51 $68 #
+coedge $-1 $52 $-1 $-1 $18 forward $50 #
+coedge $-1 $53 $-1 $-1 $27 forward $50 #
+coedge $-1 $54 $-1 $-1 $22 reversed $50 #
+coedge $-1 $51 $-1 $-1 $26 reversed $50 #
+loop $-1 $-1 $56 $69 #
+coedge $-1 $57 $-1 $-1 $19 forward $55 #
+coedge $-1 $58 $-1 $-1 $28 forward $55 #
+coedge $-1 $59 $-1 $-1 $23 reversed $55 #
+coedge $-1 $56 $-1 $-1 $27 reversed $55 #
+loop $-1 $-1 $61 $70 #
+coedge $-1 $62 $-1 $-1 $20 forward $60 #
+coedge $-1 $63 $-1 $-1 $25 forward $60 #
+coedge $-1 $64 $-1 $-1 $24 reversed $60 #
+coedge $-1 $61 $-1 $-1 $28 reversed $60 #
+face $-1 $66 $35 $71 $29 forward single #
+face $-1 $67 $40 $71 $34 forward single #
+face $-1 $68 $45 $71 $30 forward single #
+face $-1 $69 $50 $71 $31 forward single #
+face $-1 $70 $55 $71 $32 forward single #
+face $-1 $-1 $60 $71 $33 forward single #
+shell $-1 $-1 $-1 $65 $-1 $72 #
+lump $-1 $-1 $71 $73 #
+body $-1 $72 $-1 $-1 #
+End-of-ACIS-data
+)";
+
 }  // namespace
 
 TEST_CASE("ACIS SAT import: plain cylinder builds a valid solid", "[acissat]") {
@@ -86,18 +168,113 @@ TEST_CASE("ACIS SAT import: empty stream is refused with a message", "[acissat]"
 
 TEST_CASE("ACIS SAT import: unsupported surface kind is refused by name, not silently dropped",
           "[acissat]") {
-  // Same cylinder fixture, but the side face's surface record is swapped for a spline-surface stub.
+  // Same cylinder fixture, but the side face's surface record is swapped for a genuinely
+  // unrecognized kind (not one of #300's spline/blend/sweep additions either).
   std::string sat = kCylinderSat;
   const std::string from = "cone-surface $-1 0 0 0 0 0 1 1 0 0 0 1 2 1 #";
-  const std::string to = "spline-surface $-1 #";
+  const std::string to = "helix-surface $-1 #";
   const size_t pos = sat.find(from);
   REQUIRE(pos != std::string::npos);
   sat.replace(pos, from.size(), to);
 
   const acissat::ImportResult r = acissat::ImportSatSolid(sat, "E2");
   CHECK_FALSE(r.ok);
-  CHECK(Contains(r.error, "spline-surface"));
+  CHECK(Contains(r.error, "helix-surface"));
   CHECK(Contains(r.error, "E2"));
+}
+
+TEST_CASE("ACIS SAT import: spline-surface face maps onto a SurfaceKind::Nurbs patch (issue #300)",
+          "[acissat]") {
+  const acissat::ImportResult r = acissat::ImportSatSolid(kCubeSplineTopSat, "TestEntity");
+  INFO(r.error);
+  REQUIRE(r.ok);
+  CHECK(r.solid.faces.size() == 6);
+  CHECK(brep::Validate(r.solid) == brep::Problem::Ok);
+
+  int nurbsCount = 0, planeCount = 0;
+  for (const brep::Face& f : r.solid.faces) {
+    if (f.surface.kind == brep::SurfaceKind::Nurbs)
+      ++nurbsCount;
+    else if (f.surface.kind == brep::SurfaceKind::Plane)
+      ++planeCount;
+  }
+  CHECK(nurbsCount == 1);
+  CHECK(planeCount == 5);
+
+  const auto mp = brep::ComputeMassProperties(r.solid);
+  CHECK(mp.volume == Catch::Approx(1.0).epsilon(1e-6));  // the flat spline top makes this exactly a cube
+}
+
+TEST_CASE("ACIS SAT import: a degree above the NURBS patch limit is refused", "[acissat]") {
+  std::string sat = kCubeSplineTopSat;
+  const std::string from = "spline-surface $-1 1 1 2 2 0";
+  const std::string to = "spline-surface $-1 4 1 2 2 0";
+  const size_t pos = sat.find(from);
+  REQUIRE(pos != std::string::npos);
+  sat.replace(pos, from.size(), to);
+
+  const acissat::ImportResult r = acissat::ImportSatSolid(sat, "");
+  CHECK_FALSE(r.ok);
+  CHECK(Contains(r.error, "degree"));
+}
+
+TEST_CASE("ACIS SAT import: a trimmed spline-surface (loop not the full patch corners) is refused, "
+          "not approximated",
+          "[acissat]") {
+  // Nudge one control point away from the loop's actual corner vertex, so the loop no longer bounds
+  // the whole patch rectangle — this importer has no way to represent a genuine trim (ADR-048 (b)).
+  std::string sat = kCubeSplineTopSat;
+  const std::string from = "0.5 0.5 1 #";
+  const std::string to = "0.5 0.5 1.5 #";
+  const size_t pos = sat.rfind(from);
+  REQUIRE(pos != std::string::npos);
+  sat.replace(pos, from.size(), to);
+
+  const acissat::ImportResult r = acissat::ImportSatSolid(sat, "");
+  CHECK_FALSE(r.ok);
+  CHECK(Contains(r.error, "does not bound the whole parametric patch"));
+}
+
+TEST_CASE("ACIS SAT import: blend-surface reduces to its representable underlying surface",
+          "[acissat]") {
+  // Appends a new `blend-surface $-1 $8 #` record (landing at index 24, right after kCylinderSat's
+  // existing 24 records) that names the fixture's existing bottom plane-surface (record 8) as its
+  // representable reduction, then repoints the bottom cap face at it instead of $8 directly — the
+  // shape this importer builds must be unchanged.
+  std::string sat = kCylinderSat;
+  const size_t endPos = sat.find("End-of-ACIS-data");
+  REQUIRE(endPos != std::string::npos);
+  sat.insert(endPos, "blend-surface $-1 $8 #\n");
+  const std::string faceFrom = "face $-1 $19 $11 $21 $8 forward single #";
+  const std::string faceTo = "face $-1 $19 $11 $21 $24 forward single #";
+  const size_t facePos = sat.find(faceFrom);
+  REQUIRE(facePos != std::string::npos);
+  sat.replace(facePos, faceFrom.size(), faceTo);
+
+  const acissat::ImportResult r = acissat::ImportSatSolid(sat, "");
+  INFO(r.error);
+  REQUIRE(r.ok);
+  CHECK(brep::Validate(r.solid) == brep::Problem::Ok);
+
+  int planeCount = 0;
+  for (const brep::Face& f : r.solid.faces)
+    if (f.surface.kind == brep::SurfaceKind::Plane)
+      ++planeCount;
+  CHECK(planeCount == 2);
+}
+
+TEST_CASE("ACIS SAT import: blend-surface with no representable reduction is refused", "[acissat]") {
+  std::string sat = kCylinderSat;
+  const std::string from = "cone-surface $-1 0 0 0 0 0 1 1 0 0 0 1 2 1 #";
+  const std::string to = "blend-surface $-1 $-1 #";
+  const size_t pos = sat.find(from);
+  REQUIRE(pos != std::string::npos);
+  sat.replace(pos, from.size(), to);
+
+  const acissat::ImportResult r = acissat::ImportSatSolid(sat, "");
+  CHECK_FALSE(r.ok);
+  CHECK(Contains(r.error, "blend-surface"));
+  CHECK(Contains(r.error, "does not reduce"));
 }
 
 TEST_CASE("ACIS SAT import: sphere-surface is recognized but refused as a fast-follow", "[acissat]") {
