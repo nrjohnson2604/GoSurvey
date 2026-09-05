@@ -6711,6 +6711,53 @@ capability that does not exist. They are recorded here rather than quietly dropp
   wording implies.
 - Revisions: 2026-09-04 — initial (D-2026-09-04-c, GitHub issue #148 criteria 3, 7 and 8).
 
+### REQ-320 — Import an ACIS 3D-solid block (analytic primitives, SAT only)
+
+- Purpose: real-world vendor block libraries (Plant 3D piping/mechanical symbols) commonly store their
+  only geometry as an ACIS `3DSOLID` entity; GoSurvey's DWG/DXF importer silently skips it today,
+  producing an empty block definition with no error (GitHub issue #299, found while implementing #284).
+- Priority: should
+- Type: functional
+- Depends on: REQ-313 / ADR-045 (the analytic `brep::Surface` kinds this maps onto), ADR-051 (the scope
+  decision this requirement records), REQ-300 (no vendored ACIS/geometry kernel).
+- Statement: importing a `.dwg`/`.dxf` entity of type `3DSOLID` whose ACIS payload is **SAT-encoded**
+  (ADR-051 (a)) and whose body is a **solid lump** built only from **analytic primitive surfaces** —
+  plane, cylinder (ACIS's zero-half-angle cone), or cone this increment, and only their **full-revolve**
+  form (two full-circle rim edges, no seam) — sphere, torus, and a **partial** cylinder/cone revolve
+  (whose u-span cannot simply be the full `[0, 2*pi)` a full revolve's can) are each a tracked
+  fast-follow within this same requirement, not yet accepted (ADR-051 (b-1)) — and a planar face's
+  boundary within the kernel's existing simple-polygon tessellation limit (ADR-051 (c)) — produces a
+  real `brep::Solid` with
+  `PrimitiveKind::None`, placed in `st.cadSolids` (and,
+  when the entity lives inside a block definition, carried by `CadBlockContent::solids` so it survives
+  `INSERT`/`WBLOCK`/`BLOCKIMPORT`, closing the same round-trip gap #284 fixed for 2D geometry).
+
+  ACIS payloads or content outside that scope are **refused, never approximated or silently dropped**
+  (ADR-051 (d), REQ-201): SAB encoding, free-form/blend/swept surfaces, sphere/torus surfaces (this
+  increment), a curved face whose loop does not match a recognized shape, a wire or sheet (non-solid)
+  body. The refusal names the entity's handle and the specific record or face
+  that could not be represented, and reaches the log the same way an unrecognized entity type already
+  does (`NoteSkip`) — the import completes with a message, not a silent empty result.
+- Acceptance:
+  - a `.dwg` block whose sole content is a single-primitive ACIS SAT solid (e.g. a plain cylinder or a
+    box with a cylindrical bore) round-trips through `BLOCKIMPORT`: the resulting block definition's
+    `CadSolid` has the expected face count, surface kinds and volume (within REQ-101) for the source
+    shape;
+  - the same solid inserted via `INSERT` and then `WBLOCK`'d back out survives with its solid intact;
+  - a `.dwg` `3DSOLID` using SAB encoding is refused with a message naming the entity and "binary (SAB)
+    ACIS is not yet supported" (or equivalent), and the rest of the file still imports;
+  - a `.dwg` `3DSOLID` containing a spline/blend surface, or a face whose boundary does not reduce to a
+    parametric rectangle, is refused with a message naming the entity and the specific face/record, and
+    the rest of the file still imports;
+  - a malformed or truncated ACIS stream is refused with a message, never a crash;
+  - no third-party ACIS/geometry-kernel dependency is introduced (REQ-300).
+- Owner-layer: IO (`src/util/AcisSatParser.*`, `src/io/LibreDwgCad.cpp`), Domain (`brep::Solid` is the
+  target representation, unchanged), Commands (`CadBlockContent`/`CadBlocks.cpp` round-trip plumbing)
+- Status: accepted — **increment 1 of 3**. SAB (#301) and free-form/blend/swept surfaces (#300) are
+  separate, deferred increments; general trimmed-face boundaries are a kernel extension tracked
+  separately (#302) and not a prerequisite here.
+- Revisions: 2026-09-05 — initial (ADR-051, GitHub issue #299).
+
 ### REQ-100 — Frame budget
 - Purpose: interactive responsiveness (desktop/OpenGL)
 - Priority: should
