@@ -6758,6 +6758,37 @@ capability that does not exist. They are recorded here rather than quietly dropp
   separately (#302) and not a prerequisite here.
 - Revisions: 2026-09-05 — initial (ADR-051, GitHub issue #299).
 
+### REQ-321 — General trimmed-boundary faces (representation decision only)
+
+- Purpose: `brep::Face` can currently only bound a face with the surface's own iso-parameter rectangle
+  (`uStart/uEnd/vStart/vEnd`, REQ-313/ADR-045); a real-world imported solid (ACIS, per #299/#302) or any
+  future feature needing an arbitrarily-trimmed face (general fillets, freeform sketch profiles) cannot
+  be represented. This requirement records the representation decision only — no kernel behavior changes
+  as part of it.
+- Priority: should
+- Type: architectural
+- Depends on: REQ-313 / ADR-045 (the `Face`/`Loop`/`Edge` model being extended), REQ-315 / ADR-048 (the
+  `SurfaceKind::Nurbs` parameter rectangle this must not conflict with), ADR-052 (the decision this
+  requirement records).
+- Statement: `brep::Face` gains an additive `paramLoops` field — a straight-line polygon in (u,v) space
+  per existing `loops` entry (outer boundary plus holes) — that is **empty by default**, leaving every
+  current primitive and Boolean-result builder's rectangle-form faces byte-identical in every consumer
+  (`Validate`, mass properties, tessellation, picking). A non-empty `paramLoops` marks a face as
+  **general form**, whose boundary for classification purposes (point-in-loop tests) is that polygon,
+  while the authoritative 3D boundary curve remains the existing `loops`/`Edge` records unchanged. Only
+  straight-line polylines are in scope; a curved boundary edge contributes finely-sampled points, and the
+  procedural `Intersection` edge kind is out of scope (no producer needs it). Full detail in ADR-052.
+- Acceptance:
+  - `spec/architecture.md` records ADR-052 with status "accepted" and a decision date;
+  - this requirement and ADR-052 explicitly name the follow-up order for #302's four consumer areas:
+    #306 (data model + `Validate`) → #307 (mass properties) → #308 (tessellation) → #309 (picking), with
+    #310 (ACIS import) as the concrete consumer that wires an importer into the new representation;
+  - no file under `src/` is modified by this requirement — it is a recorded decision only, implemented
+    by the follow-up issues above.
+- Owner-layer: Domain (`brep` — decision only; the follow-up issues are the actual owners of the code)
+- Status: accepted — design decision recorded; #306–#310 implement it.
+- Revisions: 2026-09-05 — initial (ADR-052, GitHub issue #305, split from #302, split from #299).
+
 ### REQ-100 — Frame budget
 - Purpose: interactive responsiveness (desktop/OpenGL)
 - Priority: should
