@@ -191,6 +191,8 @@ void CadBlockCaptureDrawing(const AppCommandState& st, CadBlockContent* c) {
   c->textAttrs = st.cadAnnotationAttrs;
   c->meshes = st.cadMeshes;
   c->meshAttrs = st.cadMeshAttrs;
+  c->solids = st.cadSolids;          // REQ-320 / ADR-051
+  c->solidAttrs = st.cadSolidAttrs;
   for (const CadBlockRef& r : st.cadBlockRefs) {
     CadBlockNested n;
     n.defName = r.defName;
@@ -284,7 +286,7 @@ void HarvestDrawingPrimitivesIntoContent(const AppCommandState& st, CadBlockCont
 bool DrawingHasCaptureableGeometry(const AppCommandState& st) {
   return !st.userLinesFlat.empty() || !st.userCirclesCxCyZR.empty() || !st.userArcs.empty() ||
          !st.userEllipses.empty() || st.userPolylineOffsets.size() >= 2 || !st.cadAnnotations.empty() ||
-         !st.cadMeshes.empty() || !st.importedDxfAttrDefs.empty();
+         !st.cadMeshes.empty() || !st.cadSolids.empty() || !st.importedDxfAttrDefs.empty();
 }
 
 std::string FileStemUtf8(const char* pathUtf8) {

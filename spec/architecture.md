@@ -2888,3 +2888,100 @@ Resolves the SPEC GAP raised by TASK-056 §3. **Supersedes (b) and (c) above.**
   never depth-tested, which is right for 2D linework and wrong for a solid's far-side face, and that
   wants a screenshot rather than an argument); grips; gizmos; fillet and chamfer; picking a
   sub-object of a mesh or a TIN surface, neither of which has face identity (ADR-026 (g), REQ-070).
+
+### ADR-051 — ACIS 3D-solid import: SAT-only, analytic primitives that fit the existing rectangular face model, refuse otherwise   (2026-09-05, accepted)
+
+- **Context.** Issue #299: vendor block-library `.dwg`/`.dxf` files (e.g. Plant 3D piping symbols) commonly
+  hold their only geometry as an ACIS `3DSOLID` entity — LibreDWG decrypts the container but exposes only
+  the raw ACIS record stream (`Dwg_Entity__3DSOLID::acis_data`), never tessellating it. Three questions
+  needed a recorded answer before any code, per CLAUDE.md's SPEC GAP process:
+
+  **(a) SAT vs. SAB.** `_3DSOLID_FIELDS::version` (DXF 70) distinguishes ACIS v1 text (SAT) from v2+
+  binary (SAB) framing of the same record model. **Decision: SAT only for the first increment.** SAT's
+  tokens are whitespace-delimited text, trivial to hand-parse; SAB uses typed binary tokens and would
+  double the parser surface for the same topology-interpretation logic. Deferred to **#301**, which reuses
+  whatever record-interpretation code this ADR's implementation produces.
+
+  **(b) Surface/curve scope.** ACIS analytic surfaces (`plane-surface`, `cone-surface` — which also
+  encodes a cylinder as the zero-half-angle case, `sphere-surface`, `torus-surface`) map directly onto
+  GoSurvey's existing `brep::SurfaceKind` (`Plane`/`Cylinder`/`Cone`/`Sphere`/`Torus`, ADR-045). ACIS
+  free-form surfaces (`spline-surface`) and derived surfaces (blends, sweeps, lofts not already reduced to
+  an analytic type by the file writer) have no such direct mapping and would route through
+  `SurfaceKind::Nurbs` (ADR-048), which needs its own knot/control-point/trim design. **Decision: analytic
+  primitive surfaces only for the first increment.** Deferred to **#300**.
+
+  **(b-1) Within "analytic primitives", plane/cylinder/cone ship first, and only their FULL-revolve
+  form; sphere/torus, and a PARTIAL cylinder/cone revolve, are each a fast-follow of this same
+  feature.** A full revolve (two full-circle rim edges, no seam) has a fixed `u` span — `[0, 2*pi)` —
+  independent of the loop's actual geometry, so it needs no derivation beyond recognizing the shape.
+  A partial revolve (a seam line, an arc, a seam line, an arc) is an equally recognizable loop shape,
+  but its `u` span is NOT fixed — it has to come from the seam edges' actual angular position in the
+  face's own frame, a materially different derivation this increment does not implement. **Review of
+  this very change caught a first draft that recognized the partial shape but then defaulted its span
+  to the full revolve's `[0, 2*pi)` regardless — a real defect (silently over-reporting area/volume on
+  a partial cylindrical wall) that would have shipped invisibly, since `Validate` checks topology, not
+  a face's span against its loop's actual geometric extent.** Landing the correct derivation needs its
+  own fixture that actually exercises a non-full span, which this ADR's revision does not yet have;
+  the honest fix is to ship only the shape this increment can prove correct (a hand-authored full
+  cylinder fixture, ADR-051's own sanctioned approach) and refuse the partial shape by name, rather
+  than land an unverified formula. A sphere's loop can pinch to a point at a pole (a degenerate
+  "vertex" the loop's edges meet at rather than a fourth corner) and a torus has its own seam/pole
+  combinations; both need a genuinely different loop-shape recognizer than the cylinder/cone one, not
+  a parameter change to it. Rather than risk a hastily-generalized recognizer being subtly wrong in
+  exactly the cases that are hardest to unit test by hand, **this increment ships plane and the
+  full-revolve form of cylinder/cone only**; sphere, torus, and the partial-revolve span derivation are
+  each refused by
+  name ("recognized but not yet mapped") and tracked as the next increment of #299 itself, not a new
+  issue — the parser, topology walk and refusal plumbing this ADR builds are unchanged by adding them.
+
+  **(c) The face-boundary mismatch, and why it forced a second decision (issue #302).** A general ACIS
+  face's boundary is an arbitrary closed loop of edges in parameter space. `brep::Face` (ADR-045) instead
+  carries a **rectangular** parametric span (`uStart/uEnd/vStart/vEnd`) — every existing primitive and
+  Boolean-result builder produces faces whose boundary is exactly one such rectangle, and `Validate`, mass
+  properties and tessellation all assume it. Making the kernel accept a general trimmed loop is a real
+  architectural extension (it touches every one of those consumers, for every face kind, not just the ones
+  ACIS exercises) — far beyond an importer's scope, and requiring a REQ/ADR of its own. **Decision:
+  #299 accepts only ACIS solids whose every face's boundary reduces to that rectangle** (checked by
+  walking each face's loop, converting vertices to the surface's own parameters, and confirming the loop
+  is exactly the surface's iso-parameter rectangle at those bounds, with at most a hole loop the kernel's
+  existing "extra loop" convention already supports). Anything else — an irregularly trimmed face, a loop
+  that doesn't close onto an axis-aligned parameter rectangle — is refused by name. General trimmed-face
+  support is tracked separately as **#302** and is not a prerequisite for #299.
+
+  **(d) Unsupported content: refuse, never approximate.** Matches the export precedent already recorded
+  (D-2026-09-01-b, which refuses to tessellate a GoSurvey solid into DWG rather than write a lossy
+  `3DSOLID`) and REQ-201 (no silent data loss). Every refusal names the entity handle and the specific
+  record/face that could not be represented — an empty block definition with no message is exactly the
+  failure issue #299 was filed to fix, and a silently-approximated one would be worse: a shape that reads
+  as authoritative but disagrees with the source file.
+
+- **Decision.**
+  1. A new pure, dependency-free module, `src/util/AcisSatParser.{hpp,cpp}` (Domain layer, no LibreDWG/GL/
+     ImGui dependency — same ADR-002 pressure as `brep` itself), tokenizes a SAT text stream into records
+     keyed by their `$n` position, and resolves the body → lump → shell → face → loop → coedge → edge →
+     vertex → point graph into a `brep::Solid` by direct translation (ACIS already gives explicit topology,
+     so this is a graph translation, not a primitive-recognition problem) — checking (c)'s rectangle
+     constraint per face and returning a per-face/per-entity `Problem`-style reason on the first mismatch.
+  2. `src/io/LibreDwgCad.cpp`'s `ImportObject` gains a `DWG_TYPE__3DSOLID` case (alongside the existing
+     flat dispatch chain) that refuses immediately on `version` indicating SAB, then hands `acis_data` to
+     the new parser; a refusal reaches the same `NoteSkip` mechanism the dispatch's fallthrough already
+     uses, so the entity is reported, not silently dropped.
+  3. `CadBlockContent` (`src/util/cadblock.hpp`) gains a `solids` member alongside its existing `meshes`,
+     and `CadBlocks.cpp`'s capture/load-back/`DrawingHasCaptureableGeometry` functions treat it the same
+     way they already treat meshes — closing the round-trip gap issue #299 named for *any* solid-bearing
+     block (including a native GoSurvey solid WBLOCK'd), not only an ACIS-derived one.
+
+- **Consequences.**
+  - A real-world file using free-form/blend surfaces, SAB encoding, or a non-rectangular trim (e.g. a
+    filleted edge written back as an analytic-looking but irregularly-bounded face) imports nothing from
+    that `3DSOLID` and reports why, rather than the silent empty result issue #299 was filed against.
+  - #300, #301 and #302 each build on this ADR's module/plumbing rather than duplicating it.
+  - `kGsFormatVersion` is unaffected: an imported solid becomes an ordinary `brep::Solid` with
+    `PrimitiveKind::None` (ADR-045's "no recipe" case, already handled — a Boolean result has the same
+    shape), so nothing about `.gs` serialization changes.
+
+- **Out of scope and not designed for:** SAB (#301); spline/blend/swept surfaces (#300); general trimmed
+  face boundaries (#302); DWG *export* of solids (unchanged, D-2026-09-01-b); ACIS `wire` bodies (curves
+  with no faces) and `sheet` bodies (open shells) — this ADR covers solid (`is_solid` lump) bodies only,
+  matching REQ-313's "the solid kernel" framing; a future issue would need to name wire/sheet import if
+  wanted.
