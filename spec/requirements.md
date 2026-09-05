@@ -6366,6 +6366,66 @@ capability that does not exist. They are recorded here rather than quietly dropp
   7. **A pick costs no tessellation, and rejects cheaply.** The already-built display triangles are
      what is tested, behind a padded bounds test, so a pick stays inside REQ-100's frame budget on
      hover and the user picks the geometry they can actually see.
+
+  **Increment 2 — the selection.** Items 1-7 answer *what is under the cursor*. What follows is what
+  the program does with that answer: a selection the user makes, sees, and can act on later
+  (D-2026-09-04-a).
+
+  8. **Entry is `Ctrl` + click, and nothing else changes.** A plain click selects the whole solid
+     exactly as it did before. Holding `Ctrl` selects the face, edge or vertex under the cursor
+     instead. There is no mode to enter or leave, deliberately: a persistent sub-object mode is one
+     a user can be left in without noticing, after which every ordinary click means something they
+     did not intend.
+  9. **The sub-object selection is its own store, and the two selections are mutually exclusive.** A
+     plain click clears the sub-object selection; a `Ctrl` click clears the entity selection. Shift
+     toggles within whichever selection the click addresses, keeping the meaning Shift already has.
+     Nothing that consumes the entity selection — a transform, DELETE, the Properties panel, export
+     — ever sees a sub-object, which is what makes "does not interfere" a structural property rather
+     than a promise.
+  10. **A sub-object reference expires; it does not re-bind.** It is an index *plus* the identity of
+      the solid it came from (ADR-049). An index keeps its meaning across an edit that preserves the
+      topology and loses it across one that changes the counts, so a reference whose solid has been
+      replaced by a topology-changing edit is dropped rather than silently pointing at whatever now
+      occupies that index.
+  11. **What is selected is visible, and a face reads as a face.** A selected face is drawn as a
+      tinted fill over its own triangles, an edge and a vertex as accent linework. **The face fill
+      is depth-tested and the linework is not.** A never-occluded face tint would show a back face
+      glowing through the body; an occluded edge or vertex would vanish into the surface it lies on,
+      being one line or one dot thick. This is a deliberate exception to the blanket overlay rule
+      ("a selection highlight that hides behind the object it is highlighting is a bug"), which was
+      written for 2D linework and does not survive contact with a closed volume.
+
+      In **2D Wireframe** — the default style, which draws no solid faces and runs with the depth
+      test off — there is nothing for the tint to be occluded by and it simply draws. That is the
+      intended behaviour, not a fallback: in wireframe the tint is the only way a face selection can
+      be shown at all, and no nearer surface exists on screen to contradict it.
+  12. **A whole selected solid is visible too.** It is drawn by its own edges, which is what the
+      entity pick already tests against, so the highlight traces the thing that selects. Stated
+      because it did not exist: before this increment a selected solid showed nothing whatever.
+  13. **The highlight is built from the per-solid tessellation**, not from the coalesced display
+      batches. Those merge solids that draw identically into shared buffers for REQ-100's draw-call
+      budget and carry no per-face channel, so a face's triangles cannot be recovered from them.
+  14. **While `Ctrl` is held, the sub-object under the cursor is shown BEFORE it is clicked** — a
+      pre-highlight in a quieter treatment than the selection's, plus a rollover readout naming what
+      would be selected and the properties of the solid it belongs to (D-2026-09-04-b).
+
+      Not decoration. Precedence is vertex-then-edge-then-face within screen-derived tolerances
+      (item 3), so which of the three a click will take is a function of the cursor's distance from
+      geometry the user cannot measure by eye — on a box corner, a few pixels decide between a
+      vertex, an edge and a face. Without the pre-highlight the only way to find out is to click and
+      read the log, which makes every pick a guess and a correction. The whole-entity hover
+      pre-highlight REQ-036 and REQ-039 already require exists for the weaker version of this
+      problem.
+
+      The readout follows the surface rollover REQ-089 established, including its **dwell**: it
+      appears once the cursor comes to rest and goes when it moves, because a panel that tracks the
+      cursor continuously obscures the geometry being picked. While `Ctrl` is held it takes
+      precedence over the surface and survey-point readouts — `Ctrl` says the user is asking about
+      solids.
+
+      **The pre-highlight pick must not cost the frame budget.** It runs behind the same gate the
+      entity hover pick already uses (a movement tolerance, a minimum interval, an idle cut-off), and
+      the broad-phase bounds reject of item 7 applies to it unchanged.
 - Acceptance:
   - a face pick on a cylinder reports a point on the cylinder of radius `r` **and at the azimuth the
     ray was aimed along** — both, because the projection makes the radius exact for any nearby input,
@@ -6384,19 +6444,51 @@ capability that does not exist. They are recorded here rather than quietly dropp
     triangle buffers each report no pick and leave the caller's result untouched;
   - the snap path and the sub-object path give the same answer for the same ray, because they are
     the same code;
+
+  Increment 2:
+  - a `Ctrl` click on a face, on an edge and on a vertex each leave exactly that sub-object
+    selected, and each is visible on screen;
+  - a plain click on the same solid selects the whole solid and leaves the sub-object selection
+    empty; a `Ctrl` click then leaves the entity selection empty — neither is ever populated at the
+    same time as the other;
+  - a plain click in the middle of a face selects nothing while a `Ctrl` click there selects the
+    face — the entity pick tests edges only, and this states the difference rather than hiding it;
+  - `Shift`+`Ctrl` click on an already-selected sub-object removes it and leaves the rest;
+  - a `Ctrl` click that hits no solid clears the sub-object selection and starts no selection box;
+  - with two solids one behind the other, a `Ctrl` click takes the nearer one's sub-object — the
+    per-solid occlusion rule of increment 1 cannot see across solids, so the caller orders them;
+  - a sub-object reference survives an edit that preserves the solid's topology and is dropped by
+    one that changes it, rather than pointing at a different sub-object;
+  - erasing the solid a sub-object belongs to leaves no dangling selection;
+  - a selected whole solid draws a highlight — the case that did not exist before this increment;
+  - the face fill is depth-tested and the edge and vertex linework is not, in the styles that have a
+    depth buffer at all;
+  - holding `Ctrl` over a face, an edge and a vertex pre-highlights each of them, in a treatment
+    distinct from the selection's, and the pre-highlight names the same sub-object a click would
+    take — it is the same query, so it cannot disagree;
+  - releasing `Ctrl`, or moving off every solid, leaves no pre-highlight behind;
+  - the rollover names the sub-object's KIND and the owning solid's colour, layer and linetype, and
+    appears only once the cursor has come to rest;
+  - a sub-object pre-highlight suppresses the whole-entity hover highlight rather than drawing both;
+  - the pre-highlight pick runs behind the existing hover gate, not once per frame.
   - the pick's geometry and its refusals are all decided without a window or a document.
 - Owner-layer: Domain (the pick query), UI/Commands (casting the ray, converting the tolerances, and
   what is done with the answer)
 - Status: accepted — **increment 1 of 2 delivered** (GitHub issue #148, D-2026-09-03-c, ADR-049,
-  TASK-189). Increment 1 is the shared pick *query*: `ray3d::RayTriangleIntersect` and the new pure
+  TASK-189); **increment 2 specified and in progress** (D-2026-09-04-a, TASK-199). Increment 1 is
+  the shared pick *query*: `ray3d::RayTriangleIntersect` and the new pure
   `src/util/solidpick.{hpp,cpp}`, with `CadSnap.cpp`'s two file-private copies refactored onto them
-  so the divergence in item 1 cannot recur. Increment 2 is the *selection*: a sub-object selection
-  mode with its own store, the highlight treatment, and coexistence with whole-entity selection —
-  which is where #148's acceptance criteria 1 and 2 are actually met.
+  so the divergence in item 1 cannot recur. Increment 2 is the *selection* — statement items 8-13
+  above — which is where #148's acceptance criteria 1 and 2 are actually met.
 - Revisions: 2026-09-03 — initial; increment 1 delivered. Same day, before merge: the "Starting
   state" note above added and the statement recast after review found the requirement had been
   drafted on the premise that solid faces were unpickable. They were not; the premise came from
   PR #180, which predates REQ-313 landing and was quoted without being re-checked against `beta`.
+  2026-09-04 — increment 2 given a statement and acceptance of its own (items 8-13). It had a named
+  scope and no criteria, which is a requirement that cannot be verified: the status line said what
+  increment 2 *was about* while every one of the eleven acceptance bullets tested the query. The two
+  behavioural choices it turned on — `Ctrl`+click for entry, and a depth-tested face fill against
+  never-occluded edge and vertex linework — were put to the user and are recorded as D-2026-09-04-a.
 
 ### REQ-319 — Push/pull a solid's face: the first operation that EDITS a solid
 
@@ -6410,14 +6502,29 @@ capability that does not exist. They are recorded here rather than quietly dropp
   an exact answer possible), ADR-046 (d) (compute, validate, then replace).
 - Statement: a **planar** face of a solid can be moved along its own normal by a signed distance,
   producing a new solid, when the geometry permits it. The behaviour this requires:
-  1. **The face's own plane and its boundary move together.** The face's surface origin and every
-     vertex its loops use translate by `distance × outward normal`. A neighbouring face keeps its
-     surface and simply becomes taller or shorter, which is what makes a box's side stay a plane
-     while its top rises.
-  2. **It is refused unless every neighbour is a plane parallel to the push.** A neighbouring face
-     whose surface is not a plane, or is a plane whose normal is not perpendicular to the push
-     direction, would have to be **re-solved** rather than translated: its own vertices would leave
-     its own surface. The operation refuses by name instead of producing that.
+  1. **The face's plane moves, and every corner of it is RE-SOLVED.** The face's surface origin
+     translates by `distance x outward normal`. Each vertex its loops use is then recomputed as the
+     point where the planes of the faces meeting there now cross - **not** translated along the push.
+
+     That distinction is the whole generality of the operation, and it was learned by measurement.
+     Translating corners is correct only where every neighbour contains the push direction: true of
+     a box, false of everything else. Measured against the shipped primitives, translation managed
+     **box 6/6, wedge 2/5, pyramid 0/6** - a pyramid is entirely flat-faced and could not be pushed
+     at all. Re-solving gives **box 6/6, wedge 5/5, pyramid 6/6**, with identical answers on the box.
+
+     A neighbour keeps its surface untouched throughout, and its own vertices are re-solved *onto*
+     it, so it stays a plane its boundary actually lies on. Two consequences worth stating because
+     they are what a user sees: extending a wedge's end face makes the wedge **taller**, because the
+     ramp keeps its slope; and raising a pyramid frustum's top makes that top **narrower**, because
+     the walls keep theirs.
+  2. **It is refused when a CURVED face meets the moved one.** A corner is re-solved by intersecting
+     the surfaces around it, and a curved surface is not a plane to intersect: a cylinder wall beside
+     a cap would have to change its stored radius or height, which is a different edit.
+  3. **It is refused when a corner cannot be re-solved** - the planes there do not cross in a single
+     point, or more than three faces meet and moving one leaves no point satisfying all of them. A
+     true pyramid's apex is the honest example: four planes meet there, and pushing one of its side
+     faces would split that apex into several points. A topology change, and a different operation.
+     Its BASE still pushes, because those corners are three planes each.
 
      **This precondition cannot be delegated to `brep::Validate`, and the case that proves it was
      measured.** Validate checks topology and degeneracy — closed shells, edges used twice with
@@ -6436,21 +6543,21 @@ capability that does not exist. They are recorded here rather than quietly dropp
      0.001 ft push on a wedge, and REQ-201 asks for a reason the user can *read*. Both halves are
      stated because the difference between them is exactly the kind of thing a later reader would
      otherwise have to re-derive.
-  3. **A zero or non-finite distance is refused**, not treated as a no-op that reports success: a
+  4. **A zero or non-finite distance is refused**, not treated as a no-op that reports success: a
      command that says it moved something it did not is worse than one that declines.
-  4. **The result is validated before anything is stored** (ADR-046 (d)). A push that collapses the
+  5. **The result is validated before anything is stored** (ADR-046 (d)). A push that collapses the
      solid, inverts it, or degenerates a face is refused by name and the document is untouched. A
      push far enough to turn a solid inside out is a real user gesture, not a hypothetical.
-  5. **The topology is preserved, so a sub-object reference survives the edit.** The operation moves
+  6. **The topology is preserved, so a sub-object reference survives the edit.** The operation moves
      geometry and changes no counts, which is exactly the case ADR-049 measured when it chose an
      index paired with the solid's identity. A push therefore leaves the pushed face still selected,
      and a second push continues from the first.
-  6. **The recipe is dropped, never quietly updated.** A pushed box is no longer the box its recipe
+  7. **The recipe is dropped, never quietly updated.** A pushed box is no longer the box its recipe
      describes. ADR-045 already made the recipe optional and never consulted by validity, mass
      properties or tessellation; a recipe that no longer describes its solid is worse than none,
      because it reads as authoritative. `.gs` already stores topology rather than the recipe, so a
      pushed solid round-trips with no format change.
-  7. **One undoable step.** The whole edit — including dropping the recipe and re-tessellating — is
+  8. **One undoable step.** The whole edit — including dropping the recipe and re-tessellating — is
      a single undo, and Ctrl+Z restores the prior solid exactly.
 - Acceptance:
   - pushing a box's top face by `+d` gives a solid whose volume is the original plus `base area × d`,
@@ -6464,9 +6571,14 @@ capability that does not exist. They are recorded here rather than quietly dropp
   - a push that would collapse the solid to zero height or through itself is refused by name, and
     the input solid is returned untouched;
   - a zero distance, a non-finite distance, and an out-of-range face index are each refused by name;
-  - a non-planar face — a cylinder's wall — is refused by name rather than approximated;
-  - a face with a non-parallel planar neighbour is refused by name. A wedge's slanted face is the
-    hand-checkable case: pushing the wedge's top would slide the slope's vertices off the slope;
+  - a non-planar face - a cylinder's wall - is refused by name rather than approximated;
+  - a face beside a CURVED one is refused by name; a cylinder's flat cap is the hand-checkable case;
+  - a WEDGE's end face pushes, and the wedge gets TALLER as it extends, because the ramp keeps its
+    slope - the case an algorithm that translated corners could only refuse;
+  - a pyramid FRUSTUM pushes on every one of its six faces, and raising its top makes that top
+    narrower rather than keeping its size;
+  - a TRUE pyramid's side face is refused by name, because its apex would have to split into
+    several points - while its base still pushes;
   - a solid that has been pushed reports no recipe, and reloads from `.gs` with the pushed geometry;
   - the sub-object selection still names the pushed face after the edit, and a second push moves it
     again from its new position;
