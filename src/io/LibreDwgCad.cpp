@@ -286,13 +286,30 @@ void ImportAcisSolid(AppCommandState& st, const Dwg_Entity__3DSOLID* sol, const 
     NoteSkip(skipHist, "3DSOLID(SAB binary ACIS not supported, issue #301)");
     return;
   }
-  const std::string sat(reinterpret_cast<const char*>(sol->acis_data));
+  // `acis_data` is LibreDWG's decrypted buffer; the SAT-decryption cipher preserves length, so the
+  // encrypted blocks' summed size is the decrypted length — read exactly that many bytes rather than
+  // trusting a NUL terminator, which a corrupted or unusually-encoded file need not have.
+  std::string sat;
+  if (sol->num_blocks > 0 && sol->block_size != nullptr) {
+    std::size_t total = 0;
+    for (BITCODE_BL i = 0; i < sol->num_blocks; ++i)
+      total += sol->block_size[i];
+    sat.assign(reinterpret_cast<const char*>(sol->acis_data), total);
+  } else {
+    sat.assign(reinterpret_cast<const char*>(sol->acis_data));
+  }
   const acissat::ImportResult r = acissat::ImportSatSolid(sat, "3DSOLID");
   if (!r.ok) {
     NoteSkip(skipHist, ("3DSOLID(" + r.error + ")").c_str());
     return;
   }
-  st.cadSolids.push_back(std::make_shared<const brep::Solid>(std::move(r.solid)));
+  // Every other imported entity localizes against the document origin (LocalLine/LocalCircle/etc.,
+  // above) — a solid's vertices and surface/edge frames need the identical shift, or it renders and
+  // exports offset from every other entity in a state-plane drawing (REQ-101's Local storage
+  // invariant).
+  const brep::Solid localized =
+      brep::Translate(r.solid, ray3d::Vec3{-st.worldDocumentOriginX, -st.worldDocumentOriginY, 0.0});
+  st.cadSolids.push_back(std::make_shared<const brep::Solid>(localized));
   st.cadSolidAttrs.push_back(at);
 }
 

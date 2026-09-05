@@ -174,7 +174,12 @@ class Importer {
   bool Ptr(const SatRecord& r, size_t field, const char* what, int* out) {
     if (field >= r.fields.size() || r.fields[field].empty() || r.fields[field][0] != '$')
       return Fail(std::string("malformed ") + what + " pointer in a '" + r.type + "' record");
-    *out = std::atoi(r.fields[field].c_str() + 1);
+    const char* digits = r.fields[field].c_str() + 1;
+    char* end = nullptr;
+    const long v = std::strtol(digits, &end, 10);
+    if (end == digits || *end != '\0')
+      return Fail(std::string("malformed ") + what + " pointer in a '" + r.type + "' record");
+    *out = static_cast<int>(v);
     return true;
   }
 
@@ -347,6 +352,33 @@ class Importer {
     if (outLw->uses.empty())
       return Fail("loop has no coedges");
     return true;
+  }
+
+  /// This SAT schema carries no loop-type field (see the field-layout comment at the top of this
+  /// file), so a face's loops arrive in whatever order the ACIS `loop.next` chain happens to list
+  /// them — not necessarily outer-boundary-first, which is what `brep::Face::loops` requires
+  /// (`loops[0]` is the outer boundary; `Problem::PlaneFaceNotSimple` etc. all trust that order). A
+  /// hole is, by construction, smaller than the boundary it is cut from, so the loop with the larger
+  /// polygon area IS the outer one — reorder rather than trust ACIS's listing order.
+  double PolygonAreaMagnitude(const brep::Solid& out, const ucs::Ucs& planeFrame, const LoopWalk& lw) {
+    double acc = 0.0;
+    for (const brep::EdgeUse& u : lw.uses) {
+      const brep::Edge& e = out.edges[static_cast<size_t>(u.edge)];
+      const int startV = u.reversed ? e.v1 : e.v0;
+      const int endV = u.reversed ? e.v0 : e.v1;
+      const ucs::Point2D a = ucs::WorldToPlane(planeFrame, out.vertices[static_cast<size_t>(startV)].p);
+      const ucs::Point2D b = ucs::WorldToPlane(planeFrame, out.vertices[static_cast<size_t>(endV)].p);
+      acc += 0.5 * (a.x * b.y - b.x * a.y);
+    }
+    return std::fabs(acc);
+  }
+
+  void OrderPlaneLoopsOuterFirst(const brep::Solid& out, const ucs::Ucs& planeFrame,
+                                  std::vector<LoopWalk>* loops) {
+    if (loops->size() < 2)
+      return;
+    if (PolygonAreaMagnitude(out, planeFrame, (*loops)[1]) > PolygonAreaMagnitude(out, planeFrame, (*loops)[0]))
+      std::swap((*loops)[0], (*loops)[1]);
   }
 
   /// A plane face's boundary has no rectangle restriction — the kernel already accepts an arbitrary
@@ -563,6 +595,7 @@ class Importer {
           return Fail("planar face has more than one hole loop — not supported by this importer");
         if (!BuildPlaneFace(*surface, faceSense, &outFace))
           return false;
+        OrderPlaneLoopsOuterFirst(*out, outFace.surface.frame, &loops);
       } else if (surface->type == "cone-surface") {
         if (loops.size() != 1)
           return Fail("cylindrical/conical face has a hole loop — not a supported loop shape (issue #302)");
